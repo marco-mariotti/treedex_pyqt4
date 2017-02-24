@@ -2,8 +2,16 @@
 opt={'no_colors':0, 'Q':0}
 colored_keywords={}
 printed_rchar=0
-from string import join, lowercase, uppercase, lower, upper
+from string import lowercase, uppercase, digits #, lower, upper
 import sys
+from copy import deepcopy
+
+def rescale(x, ymin, ymax, xmin=0.0, xmax=1.0):  
+  """Generic function to compute proportions; it rescales proportionally an 
+  input x, which is between xmin and xmax, to output y, which is between ymin and ymax """
+  return ymin + (ymax-ymin) * ( (x-xmin)/(xmax-xmin) ) 
+
+terminal_codes={'':'\033[0m', 'red':'\033[31m', 'green':'\033[32m', 'black':'\033[30m', 'yellow':'\033[33m', 'blue':'\033[34m', 'magenta':'\033[35m', 'cyan':'\033[36m', 'white':'\033[37m', 'bright':'\033[1m', 'dim':'\033[2m', 'underscore':'\033[4m', 'blink':'\033[5m', 'reverse':'\033[7m', 'hidden':'\033[8m'}
 
 def printerr(msg, put_newline=0, how='', keywords={}, is_service=False):
   global printed_rchar
@@ -44,7 +52,6 @@ def verbose(msg, put_newline=0):
     write( msg )
     if 'log_file' in globals(): print >> log_file, str(msg),
     
-terminal_codes={'':'\033[0m', 'red':'\033[31m', 'green':'\033[32m', 'black':'\033[30m', 'yellow':'\033[33m', 'blue':'\033[34m', 'magenta':'\033[35m', 'cyan':'\033[36m', 'white':'\033[37m', 'bright':'\033[1m', 'dim':'\033[2m', 'underscore':'\033[4m', 'blink':'\033[5m', 'reverse':'\033[7m', 'hidden':'\033[8m'}
 def write(msg, put_newline=0, how='', keywords={}):
   """ Function to extend the functionalities of the standard 'print'. First argument (put_newline) when set to 1 put a newline after the string passed, as print would normally do. The argument "how" can be given a color to write the message in that color (only for atty terminals). This is prevented if opt['no_colors'] is active.  The function write is coupled with function "service" which prints service message which are deleted when another service message is printed, or another message is printed with the write function. If you use service, you should only print things with "write".
 Argument keywords allows to use certain colors (or other "how" arguments) for certain keywords. The argument is a hash of keywords and correspoding how arguments. for example if you want to higlight all "ERROR" in red, pass keywords={'ERROR':'red'} 

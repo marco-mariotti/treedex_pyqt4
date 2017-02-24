@@ -2,6 +2,8 @@ import os
 from PyQt4   import QtCore, QtGui
 from ..common import *
 
+fixed_size_policy = QtGui.QSizePolicy(QtGui.QSizePolicy.Fixed, QtGui.QSizePolicy.Fixed)
+
 def clear_layout(layout, widget=None, index=None):
   """Clears completely a PyQt layout; or, if item is not None, clears only that item.
   Defining a function for this since the standard way to do this causes a crash on mac. Will try to remedy and save memory at some point (in current implementation the widgets don't quite really disappear"""
@@ -14,7 +16,9 @@ def clear_layout(layout, widget=None, index=None):
     items=[layout.itemAt(i)  for i in indices]
     for i in items:
       w=i.widget()
-      if w is None:        layout.removeItem(i)
+      if w is None:        
+        if i.layout(): clear_layout(i.layout())    ### recursively removing layouts
+        layout.removeItem(i)
       else:                
         layout.removeWidget(w)
         w.setVisible(False)
@@ -34,7 +38,7 @@ def get_icon(label):
 class TreedexWindow(QtGui.QWidget):
   def __init__(self):
     super(TreedexWindow, self).__init__() 
-    self.Master().windows().add_window( self, **(self.window_identifier()) )    
+    self.master().windows().add_window( self, **(self.window_identifier()) )    
     # now self.window_name is available
     
   def window_identifier(self):
@@ -43,21 +47,23 @@ class TreedexWindow(QtGui.QWidget):
 
   def closeEvent(self, e):
     write('catch: window closed {n}'.format(n=self.window_name), 1)
-    self.Master().windows().remove_window(self)
+    self.master().windows().remove_window(self)
     QtGui.QWidget.closeEvent(self, e)
 
 ####################################################################################
 class HorizontalLine(QtGui.QFrame):
-  def __init__(self):
+  def __init__(self, color=None):
     super(HorizontalLine, self).__init__()
     self.setSizePolicy(QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Fixed)
     self.setFrameStyle(QtGui.QFrame.HLine)    
+    if not color is None: self.setStyleSheet('color:{}'.format(color))
 
 class VerticalLine(QtGui.QFrame):
-  def __init__(self):
+  def __init__(self, color=None):
     super(VerticalLine, self).__init__()
     self.setSizePolicy(QtGui.QSizePolicy.Fixed, QtGui.QSizePolicy.Expanding)
     self.setFrameStyle(QtGui.QFrame.VLine)    
+    if not color is None: self.setStyleSheet('color:{}'.format(color))
 
 ####################################################################################
 class ToolButton(QtGui.QToolButton):
@@ -69,3 +75,11 @@ class ToolButton(QtGui.QToolButton):
     self.setDefaultAction(action)
     if not fn is None:        self.clicked.connect(fn)
     if self.stylesheet: self.setStyleSheet(self.stylesheet)
+
+class ChainButton(QtGui.QPushButton):
+  def __init__(self, fn=None):
+    super(ChainButton, self).__init__(">") 
+    self.setStyleSheet('padding: 0px')
+    self.setFixedSize(10, 20)  
+    self.setSizePolicy(fixed_size_policy)    
+    if not fn is None:        self.clicked.connect(fn)

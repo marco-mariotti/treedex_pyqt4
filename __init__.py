@@ -4,7 +4,7 @@ __licence__ = "GPLv3"
 __version__ = "0.3"
 
 print 'start'
-from .widgets import * #this is importing data
+#from .widgets import * #this is importing data
 from .master  import * #well this also
-from .trees import AnnotatedTree
+from .trees import AnnotatedTree, NodeSelector
 print 'done'

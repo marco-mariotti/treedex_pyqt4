@@ -1,8 +1,10 @@
 from PyQt4   import QtCore
-from .data  import *
 from .common import *
+from .data  import *
+from .facecontroller import *
+from .widgets import *
 
-class MasterContainer(dict):
+class MasterContainer(dict, DC_container):
   """ Data storage object; there is one per tree, contains all the information for the GUI (e.g. what is selected, what windows are opened), as well as all features and associated statistics.
   Basically it is just a linker to a number of Manager objects, each of a different subclass to manipulate different kinds of data:
 
@@ -19,42 +21,108 @@ class MasterContainer(dict):
  -redraw()     ->  force full redraw of the main ETE window
  -clipboard()  ->  returns a link to the system clipboard
  """
-  def __init__(self, tree_link):
-    self['tree_link']=tree_link
-    for n in tree_link.traverse(): n.master_link=self
+  def __init__(self):
     #self['stats']=     StatManager(data_link=self)
     #self['session']=   SessionManager(data_link=self)
-    #self['selections']=SelectionManager(data_link=self)
+    self['selections']=SelectionManager(master_link=self)
     self['features']=  FeatureManager(master_link=self)     
-    #self['columns']=   ColumnManager(data_link=self)   #  column_id ->  FaceController or  name -> FaceController
+    self['columns']=   ColumnManager(master_link=self)   #  column_id ->  FaceController or  name -> FaceController
     self['windows']=   WindowManager(master_link=self)
+    self['trees']=     TreeManager(master_link=self)
     #self['views']  =   ViewManager(data_link=self)
     #self['colors']=    ColormapManager(data_link=self)
+    self.container=None
+    DC_container.__init__(self)
+   
+    f=lambda s:   self.trees().update_node_selection_items() if s=='Selected nodes'     else  \
+                ( self.trees().update_node_highlight_items() if s=='Highlighted nodes'  else None )
+    self.selections().signal_selection_changed.connect( f )
+
+  def add_tree(self, name, tree): return self.trees().add_tree(name, tree)
+  def add_dataframe(self, df):    return self.features().add_dataframe(df)
 
   def windows(self):     return self['windows']
   # def plots(self):       return [x for x in  self.windows() if isinstance(self.windows().get_window(x), TreedexWindow)]
   # def stats(self):       return self['stats']
-  def features(self):    return self['features']
+  def features(self):     return self['features']
   # def session(self):     return self['session']
-  # def selections(self):  return self['selections']
-  # def columns(self):     return self['columns']
+  def selections(self):   return self['selections']
+  def columns(self):      return self['columns']
   # def colors(self):      return self['colors']
   # def redraw(self):      
   #   fc=self.columns().get_column(index=1)
   #   fc.drawn={}
   #   fc.redraw()
   # def scene(self):       return self.columns().get_column(index=1).title_item.scene() 
-  def tree(self):        return self['tree_link']
+  def trees(self):       return self['trees']
   def clipboard(self):   return QtGui.QApplication.clipboard()
   #def init_windows(self): return self.windows().init_windows()
+
+  def show(self):        return self.trees().default_tree.show()
+
+
+
+
 
 class Manager(QtCore.QObject):
   def __init__(self, master_link):    
     super(Manager, self).__init__()
     self.master_link=master_link
     #self.key =''
-  def Master(self):                   return self.master_link
+  #def master(self):                   return self.master_link
 
+
+class TreeManager(Manager):
+  def __init__(self, master_link): 
+    Manager.__init__(self, master_link)
+    self.trees={} 
+    self.select_items={}  #node -> rectItem
+    self.highlight_items={}  #node -> rectItem    
+    self.default_tree=None
+  
+  def add_tree(self, name, tree):
+    #if not isinstance(tree, AnnotatedTree):
+    tree=AnnotatedTree( newick=tree.write(), master_link=self.master_link )    
+    if not self.default_tree: self.default_tree=tree
+    self.trees[name]=tree
+    #for n in tree.traverse(): n.master_link=self.master_link    
+    self.master_link.selections().add_node_selection('All nodes', NodeSelector([n for n in tree]))  ## this should be treated better   
+    tree.name2node={ n.name: n  for n in tree.traverse() }      
+    ### add controls etc 
+  
+  def get_tree(self, name=None): return self.trees[name] if not name is None else self.default_tree
+    
+  def update_node_selection_items(self):
+    ns=self.master_link.selections().get_node_selection('Selected nodes')
+    self.update_items(ns, self.select_items, 'blue', 'silver')
+
+  def update_node_highlight_items(self):
+    ns=self.master_link.selections().get_node_selection('Highlighted nodes')
+    self.update_items(ns, self.highlight_items, 'red', 'yellow')
+
+  def update_items(self, ns, target, pen, brush):
+    """ generic for selected and highlighted"""
+    # cleaning up 
+    for n in target.keys():
+      rect=target[n]
+      if not n in ns:        
+        n.scene().removeItem(rect)
+        del target[n]
+    # adding what needed
+    for n in ns:
+      if not n in target:        
+        item = n.scene().n2i[n]
+        rect = QtGui.QGraphicsRectItem(parent=item.content)
+        width, height=  n.face_area_size()
+        rect.setRect(0, 0,  width, height)
+        rect.setPen(QtGui.QColor(pen))
+        rect.setBrush(QtGui.QColor(brush))
+        rect.setOpacity(0.4)
+        target[n]=rect
+
+  def get_node(self, name, tree=None):
+    if tree is None: tree=self.default_tree
+    return tree.name2node[name]
 
 class WindowManager(Manager):
   def __init__(self, master_link): 
@@ -87,6 +155,86 @@ class WindowManager(Manager):
     del self.windows[window.window_name]
     #print 'remove window, after:' +str(self.windows)    
 
+  def open_data_explorer(self):
+    dc=DataChannel(self.master_link)
+    win=TreedexFeatureExplorer(dc)    
+    win.show()
+
+
+###################################################################################################################
+class SelectionManager(Manager):
+  """ """
+  signal_selection_list_changed=QtCore.pyqtSignal()  
+  signal_selection_changed     =QtCore.pyqtSignal(str) ## emits the name of the selection that changed  
+
+  #ignored_features=set(['species', 'name', 'support', 'dist'])
+  #virtual_features=set(['Tree'])
+  def __init__(self, master_link): 
+    Manager.__init__(self, master_link)
+    self.node_selections={}
+    #self.add_node_selection( 'All nodes', NodeSelector([n for n in self.master_link.selections()] ) )  ## this is done in MasterContainer.add_tree
+    self.add_node_selection( 'None', NodeSelector([]) )
+    self.add_node_selection( 'Selected nodes',    NodeSelector([]) )
+    self.add_node_selection( 'Highlighted nodes', NodeSelector([]) )
+
+  def add_node_selection(self, name, ns):
+    assert isinstance(ns, NodeSelector)
+    if self.has_node_selection(name): raise Exception, "ERROR trying to add a node selection whose name already exists! {}".format(name)
+    self.node_selections[name]=ns
+    self.signal_selection_list_changed.emit()
+    self.signal_selection_changed.emit(name)
+
+  def edit_node_selection(self, name, ns):
+    assert isinstance(ns, NodeSelector)
+    if not self.has_node_selection(name): raise Exception, "ERROR trying to edit a non-existing node selection! {}".format(name)
+    if self.node_selections[name] != ns:
+      self.node_selections[name]=ns
+      self.signal_selection_changed.emit(name)   
+
+  def has_node_selection(self, name): return name in self.node_selections
+
+  def get_node_selection(self, name): return self.node_selections[name]
+
+
+##############################################################################################################
+class ColumnManager(Manager):
+  def __init__(self, master_link): 
+    Manager.__init__(self, master_link)
+    self.last_index=0
+    self.name2column={}
+    self.name2index={}
+    self.index2name={}
+
+  def n_columns(self):    return self.last_index
+  def next_column(self):         self.last_index+=1
+  def add_column(self, face_controller): #, col_index=None):  
+    if not isinstance(face_controller, FaceController): raise Exception, "ERROR wrong type"
+    self.next_column()
+    new_col_index= self.n_columns()
+    print 'adding column index: ', new_col_index
+    col_name=face_controller.get_title()
+    self.name2column[col_name]    =face_controller
+    self.index2name[new_col_index]=col_name
+    self.name2index[col_name]     =new_col_index
+    face_controller.set_start_column(new_col_index)
+
+  def remove_column(self, index=None, name=None):
+    if index is None and name is None: raise Exception, "remove_column ERROR you must provide index or name of the column you want to remove"
+    if not index is None:      name= self.index2name[index]
+    else:                      index=self.name2index[name]      
+    del self.name2column[name]
+    del self.name2index[name]
+    del self.index2name[index]
+
+  def get_column(self, name=None, index=None):
+    if not name is None: return self.name2column[name]     
+    else:                name=self.index2name[index]; return self.name2column[name]          
+  def get_all_columns(self):    return self.name2column.values()
+  def has_column(self, name=None, index=None):
+    if not name is None: return name in self.name2column 
+    else:                return index in self.index2name
+
+
 ###################################################################################################################
 class FeatureManager(Manager):
   """ """
@@ -96,7 +244,8 @@ class FeatureManager(Manager):
   def __init__(self, master_link): 
     Manager.__init__(self, master_link)
     self.dataframes={}     #name to dataframe
-    self.data_channels={}  #name to datachannel
+    # self.dc_cache={}    #name to dataframe
+    # self.dc_define={}  #name to datachannel keys
     # self.feature2nodes={} # feature_name -> NodeSelector    
     # self.distance2function={}   
     # self.mds_cache=         CachedExecutor()
@@ -111,6 +260,16 @@ class FeatureManager(Manager):
     # self.add_distance_function('blosum',            blosum_distance)
     # self.add_distance_function('gapless_blosum',    gapless_blosum)
     # self.add_distance_function('distance_in_tree',  PhyloTree.get_distance, takes_node_args=True)
+
+  # def save_DC_cache(self, df, var_name):         self.dc_cache[var_name]=df
+  # def has_DC_cache(self, var_name):              return var_name in self.dc_cache
+  # def retrieve_DC_cache(self, var_name):         return self.dc_cache[var_name]
+
+  # def save_DC_define(self, dc_key, var_name):    self.dc_define[var_name]=dc_key
+  # def has_DC_define(self, var_name):             return var_name in self.dc_define
+  # def retrieve_DC_define(self, var_name):        return self.dc_define[var_name]
+  
+
 
   def get_available_dataframes(self):   return sorted(self.dataframes.keys())
   def add_dataframe(self, df, overwrite=False):          
@@ -424,3 +583,6 @@ class FeatureManager(Manager):
 #       return []
 #     else:
 #       raise Exception, "get_available_parameters_for_processing only MDS supported now!"
+
+
+from .trees import AnnotatedTree, NodeSelector

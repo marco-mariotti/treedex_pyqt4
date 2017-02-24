@@ -1,11 +1,13 @@
-true_all_function=all  #necessary since ete3 replaces 'all' 
-from ete3 import *
-all=true_all_function
 from .master import *
 from .common import *
-#from .facecontroller import *
+from .facecontroller import *
 from .widgets import *
 #from PyQt4   import QtGui,QtCore  ### NOTE: in the future you may want to get rid of QtGui here!  #  --> imported by facecontroller
+
+class NodeSelector(set):
+  """ """
+
+
 
 def annotated_tree_layout(node):
   """ Used by AnnotatedTree as default layout"""
@@ -15,59 +17,64 @@ def annotated_tree_layout(node):
   elif node.is_root():   node.img_style['shape']='square'
   else:                  node.img_style['shape']='triangle'
   if not node.is_leaf(): return 
-  # for col_index in range(1, node.Data().columns().n_columns()+1): #controllers:
-  #   the_controller = node.Data().columns().get_column(index=col_index)
-  #   if not node in the_controller: continue
-  #   if not the_controller.has_drawn(node):
-  #     col_indices=the_controller.column_indices()
-  #     these_faces=the_controller.get_faces(node) #, set_drawn=1)
-  #     if len(col_indices) != len(these_faces): raise Exception, 'ERROR get_faces() and column_indices() must return the same number of elements!'
-  #     for i in range(len(col_indices)):        node.add_face(these_faces[i], col_indices[i] , 'aligned')
+  ### old stuff:
+  for col_index in range(1, node.master().columns().n_columns()+1): #controllers:
+    the_controller = node.master().columns().get_column(index=col_index)
+    if not node in the_controller: continue
+    if not the_controller.has_drawn(node):
+      col_indices=the_controller.column_indices()
+      these_faces=the_controller.get_faces(node) #, set_drawn=1)
+      if len(col_indices) != len(these_faces): raise Exception, 'ERROR get_faces() and column_indices() must return the same number of elements!'
+      for i in range(len(col_indices)):        node.add_face(these_faces[i], col_indices[i] , 'aligned')
+  ##########
 
 class AnnotatedTree(PhyloTree):
   """ PhyloTree subclass thought for carrying features with some associated operations. AnnotatedTree can have controllers to assign homogenous representations. Use standard Tree method add_feature(feat_name, value) to add features; this can be used by plots and by face controllers (i.e. ete columns)
   Create AnnotatedTree using a newick input (text or file).
 """
 
-  def __init__(self, newick=None,  *args, **kwargs ): 
+  def __init__(self, newick=None,  master_link=None, *args, **kwargs ): 
     PhyloTree.__init__(self, newick=newick, *args, **kwargs)
     self.face_controllers=set() 
     self.actions=[self.action_delegator]  #see below this class    
-    if not newick is None: self.init_for_tree()   # just finished loading; this is the root      
+    if not newick is None: self.init_for_tree(master_link)   # just finished loading; this is the root      
 
-  def init_for_tree(self):
+  def init_for_tree(self, master_link):
     """ Ran once per tree - not per node"""
     print 'init for tree'
-    self.master_link=None
-    self.tree_style=None
-    self.init_master()
-    self.fill_node_names()
-    # name_face_controller = FeatureFaceController(feature_selector=FeatureSelector(feature_name='name'))
-    # all_leaves= [n for n in self.traverse()]
-    # for n in all_leaves:  name_face_controller.add_node( n ) #adding all leaves
+    for n in self.traverse(): n.master_link=master_link    
 
-  def init_master(self):
-    write('creating new master container!', 1, how='yellow')
-    root=self.get_tree_root()
-    MasterContainer(tree_link=root)  #this will link:       for n in root.traverse(): n.data_link=x      
-  def Master(self):  return  self.master_link
+    self.tree_style=None
+    #self.init_master()
+    self.fill_node_names()
+    name_face_controller = FeatureNameFaceController()
+    all_leaves= [n for n in self.traverse()]
+    for n in all_leaves:  name_face_controller.add_node( n ) #adding all leaves
+
+  # def init_master(self):
+  #   write('creating new master container!', 1, how='yellow')
+  #   root=self.get_tree_root()
+  #   MasterContainer(tree_link=root)  #this will link:       for n in root.traverse(): n.data_link=x      
+  def master(self):  return  self.master_link
 
   def show(self,  *args, **kwargs ):
     """ decorates the default show function to show faces by controllers, through the layout function of this class"""
     if not 'tree_style' in kwargs or kwargs['tree_style'] is None: 
       ts=TreeStyle()
       ts.layout_fn=annotated_tree_layout
-      ts.show_leaf_name=True   ##False  ### !
+      ts.show_leaf_name=False  ### 
       ts.draw_guiding_lines=True
       self.tree_style=ts
-      number_of_columns= 0 #self.Data().columns().n_columns()
-      # write( self.Master(), 1, how='blue')
-      # for column_index in range(1, number_of_columns+1):
-      #   controller=self.Data().columns().get_column(index=column_index)
-      #   indices= controller.column_indices()
-      #   the_index= indices[0] if indices else 0
-      #   the_title_item=controller.make_title_item()
-      #   if the_title_item:      self.tree_style.aligned_header.add_face(the_title_item,  the_index  ) 
+      #### old stuff
+      number_of_columns= self.master().columns().n_columns()
+      write( self.master(), 1, how='blue')
+      for column_index in range(1, number_of_columns+1):
+        controller=self.master().columns().get_column(index=column_index)
+        indices= controller.column_indices()
+        the_index= indices[0] if indices else 0
+        the_title_item=controller.make_title_item()
+        if the_title_item:      self.tree_style.aligned_header.add_face(the_title_item,  the_index  ) 
+      ####### 
       kwargs['tree_style']=self.tree_style
     qapp=QtGui.QApplication(["Treedex"])
     #self.Data().init_windows()         ## just for logwindow, to rethink
@@ -105,6 +112,7 @@ class AnnotatedTree(PhyloTree):
     """ Right click on the node (in ETE)"""
     qmenu=QtGui.QMenu()
     qmenu.addAction('Explore data', self.open_data_explorer  )
+    #qmenu.addAction('Open Scatterplot', self.open_scatterplot  )
     #qmenu.addAction('Edit', self.edit_data_channel  )
     qmenu.exec_(QtGui.QCursor.pos())
 
@@ -120,12 +128,32 @@ class AnnotatedTree(PhyloTree):
     #menu.addAction(     "test simings",   self.test_simings )  # debug
 
   def open_data_explorer(self):
-    dc=DataChannel(master_link=self.Master())
-    win=TreedexFeatureExplorer(dc)    
-    win.show()
+    self.master().windows().open_data_explorer()
+    # dc=DataChannel(parent=self.master())
+    # win=TreedexFeatureExplorer(dc)    
+    # win.show()
+
+  # def open_scatterplot(self):
+  #   dc=DataChannel(parent=self.master())
+  #   win=ScatterPlotWindow(master_link=self.master())
+  #   win.add_plot_item(piclass=NodeScatterPlotItem)
+  #   win.show()
 
   def echo(self):    print 'echooooo'
-  
+  def scene(self):   return self.master_link.columns().get_column(index=1).title_item.scene() 
+
+  def face_area_size(self):
+    """ Return the [width, height] in pixels of the area for the faces of this node"""
+    main_item = self.scene().n2i[self]
+    noderect = main_item.mapToScene(main_item.fullRegion).boundingRect()
+    rightmost_x = noderect.right()
+    if len(main_item.mapped_items):
+      last_item=main_item.mapped_items[-1] 
+      the_iterator=last_item.childItems if ( hasattr(last_item, 'column2faces') and last_item.column2faces ) else lambda :[last_item]
+      for f in the_iterator(): #useful only if last item has multiple columns
+        rect = f.mapToScene(f.boundingRect()).boundingRect() 
+        rightmost_x= rect.right()
+    return [ rightmost_x-noderect.left(), noderect.height() ]
 
   #
   #_______________inset: action for any nodes of this class_____________#
@@ -139,29 +167,34 @@ class AnnotatedTree(PhyloTree):
         #self.showActionPopup()
       else: 
         # click on this node, or face for this node
-        if self.node: 
-          print 'clicked', self.node 
-          return 
+        if self.node:
+          ns=self.node.master_link.selections().get_node_selection( 'Selected nodes' ).copy()
+          if not self.node.is_leaf():             new_ns=NodeSelector([n for n in self.node])
+          else:                                   new_ns=NodeSelector([self.node])           
+          if   QtGui.QApplication.keyboardModifiers() == QtCore.Qt.ShiftModifier:
+            ns.update(new_ns)
+          elif QtGui.QApplication.keyboardModifiers() == QtCore.Qt.ControlModifier:
+            for node in new_ns:
+              if not node in ns:
+                ns.add(node)                      
+              else:                           
+                ns.remove(node)                      
+          else: ## normal behavior: select this node
+            ns=new_ns
+          self.node.master_link.selections().edit_node_selection('Selected nodes', ns)            
 
-          # if   QtGui.QApplication.keyboardModifiers() == QtCore.Qt.ShiftModifier:
-          #   if not self.node in self.node.Data().session().get_selected_nodes():
-          #     self.node.Data().session().set_selected_nodes(add= NodeSelector([self.node]))
-          # elif QtGui.QApplication.keyboardModifiers() == QtCore.Qt.ControlModifier:
-          #   if self.node in self.node.Data().session().get_selected_nodes():
-          #     self.node.Data().session().set_selected_nodes(remove= NodeSelector([self.node]))
-          #   else: 
-          #     self.node.Data().session().set_selected_nodes(add= NodeSelector([self.node]))
-          # else: ## normal behavior: select this node
-          #   self.node.Data().session().set_selected_nodes( NodeSelector([self.node]) )
 
         #self.scene().view.set_focus(self.node) # copied from nodes_actions
         #pass    #left button
         #Tree.mouseReleaseEvent(self, e)
     def hoverEnterEvent (self, e):     
-      return 
+      if not self.node.is_leaf():             ns=NodeSelector([n for n in self.node])
+      else:                                   ns=NodeSelector([self.node])           
+      self.node.master_link.selections().edit_node_selection('Highlighted nodes', ns)            
       #if self.node:  self.node.Master().session().set_highlighted_nodes( NodeSelector([self.node]) )
 
-    def hoverLeaveEvent(self,e):       pass 
+    def hoverLeaveEvent(self,e):       
+      self.node.master_link.selections().edit_node_selection('Highlighted nodes',  NodeSelector([]))            
   #_______________ inset finish ________________________________________#
   # continue: AnnotatedTree
 

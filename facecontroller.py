@@ -1,5 +1,159 @@
+true_all_function=all  #necessary since ete3 replaces 'all' 
+from ete3 import *
+all=true_all_function
 from PyQt4   import QtCore,QtGui
 #### TO BE REVISED COMPLETELY
+
+class NodeSelector(object):
+  """ Class that handles set of nodes, and the most common operations done with them. 
+It wraps many methods from the basic class of set  (referring to NodeSelector as ns):
+  -add_node(node)       -add_nodes(node_iterable)     -remove_node(node)
+  -set_nodes(node_iterable)     
+  -__iter__()           you can use the construct      for node in ns ; same as for node in ns.nodes()
+  -__contains__(node)   you can use the construct      if node in ns  ; same as ns.has_node(node)
+  -intersection(ns)    -difference(ns)     -union(ns)
+  -split_sets(ns):   returns    [set_of_A_not_B, set_of_A_intersect_B, set_of_B_not_A]     all sets as NodeSelector objects
+
+It gives convenient ways to manipulate the set of nodes based on tree structure:
+  -get_tree_root()
+  -walk_tree(up=False, down=False, only_ancestors=False, maxup=None, maxdown=None)   
+    returns a ns obtained by walking up or down from any node in the self
+  -get_ancestral_nodes(self):  returns all ancestors in this ns, up to the root
+
+You can 'decorate' a NodeSelector with functions; this is then applied with any particular node as first argument: 
+  -set_function(fname, fn)        -get_function(fname)      -has_function(fname)      -get_value_for_node(node, fname)
+  -set_function_from_coordinate_selector(fname, coordinate_selector)  
+    see class  CoordinateSelector; use this cs to decorate this ns using the current cs attributes
+  -get_boundaries_for_function(fname)          -set_boundaries_for_function(fname, min, max)
+  -reset_boundaries_for_function(fname)        this forces recomputing next time get_.. is called
+  -compute_boundaries_for_function(fname)      recomputes by running function on each node
+"""
+  def __init__(self, iterable=[]): #, cache=None):
+    self.nodes=set( iterable ) #[n for n in iterable] )
+    self.functions=None
+    # self.key_data=None
+    # self.boundaries_per_fn=None
+    # self.cache_exec=cache
+    # self.cached_functions=None
+
+  # methods inherited from or related to sets
+  def has_node(self, node):              return node in self.nodes
+  def add_node(self, node):              self.nodes.add(node);       self.reset_key()
+  def add_nodes(self, nodes):            self.nodes.update(nodes);   self.reset_key()
+  def remove_node(self, node):           self.nodes.remove(node);    self.reset_key()
+  #def nodes(self):                       return [n for n in self]
+  def node_set(self):                    return self.nodes
+  def copy(self):                        return NodeSelector( self )
+  def set_nodes(self, nodes):            self.nodes=set(nodes)
+  def __bool__(self):    return bool(self.nodes)
+  __nonzero__=__bool__
+  def __len__(self):     return len(self.nodes)
+  def __contains__(self, node):          return self.has_node(node)
+  def __iter__(self):                    return self.nodes.__iter__()
+  def __lt__(self, other):
+    a=len(self);     b=len(other)
+    if a==b: return self.node_set() < other.node_set() #trick to get right order when sorting. A bit too expensive maybe?
+    return a<b
+  
+  def intersection(self, other):         return NodeSelector(self.nodes.intersection(other))
+  def difference(self, other):           return NodeSelector(self.nodes.difference(other))
+  def union(self, other):                return NodeSelector(self.nodes.union(other))
+  def split_sets(self, other): 
+    """ Set operation that splits the union of self and other; given A (self) and B (other), returns:
+   [ set_of_A_not_B, set_of_A_intersect_B, set_of_B_not_A  ]  """
+    a_not_b=NodeSelector(); inter=NodeSelector(); b_not_a=NodeSelector()
+    for i in other: 
+      if i in self.nodes:  inter.add_node(i)
+      else:                b_not_a.add_node(i)
+    for i in self.nodes:   
+      if not i in inter: a_not_b.add_node(i)
+    return [a_not_b, inter, b_not_a]
+  def __repr__(self): 
+    ## may be improved!
+    return join(sorted([i.name for i in self.nodes]), ', ') #.__repr__()
+
+  # methods related to the tree part
+  def get_tree_root(self):
+    for n in self.nodes: return n.get_tree_root()
+
+  def walk_tree(self, up=False, down=False, only_ancestors=False, maxup=None, maxdown=None):
+    """Return a NodeSelector with all nodes that you would encounter going up to the root and/or down to leaves  (depending on arguments up and down) starting from any of the nodes in this self NodeSelector."""
+    out=NodeSelector()
+    for n in self:
+      if not n in out:
+        if not only_ancestors or not n.is_leaf(): out.add_node(n) 
+      if up:
+        u=n;  upindex=0
+        while u.up and not u.up in out: 
+          out.add_node(u.up)        
+          u=u.up
+          upindex+=1
+          if not maxup is None and upindex==maxup:     break
+      if down:
+        for level, d in n.traverse_by_level():
+          if level==0: continue
+          if d in out: break
+          out.add_node(d)
+          if not maxdown is None and level==maxdown:   break          
+    return out
+
+  def get_ancestral_nodes(self): return self.walk_tree(up=True, only_ancestors=True)
+
+  # used for caching
+  def reset_key(self): 
+    if hasattr(self, 'key_data'): self.key_data=None
+  def key(self):
+    if not hasattr(self, 'key_data') or self.key_data is None:  
+      for x in self.nodes: 
+        if x.name: pass #the_keys_here[x]=x.name
+        else:      raise Exception, 'key for caching ERROR every node must have a name!' #an_index+=1; the_keys_here[x]=str(an_index)
+      self.key_data= join( sorted( [n.name for n in self.nodes] ), ',')
+    return self.key_data
+  
+  # functions attributed to nodeselectors
+  def set_function(self, fname, fn): 
+    if self.functions is None: self.functions={}
+    self.functions[fname]=fn
+  def get_function(self, fname):         return self.functions[fname]
+  def has_function(self, fname):         return not self.functions is None and fname in self.functions
+  def get_value_for_node(self, node, fname):        return self.get_value(fname, node)
+  def get_value(self, fname, *args, **kargs):       return self.get_function(fname)(*args, **kargs)
+    # if self.cached_functions is None or not fname in self.cached_functions:
+    # else:                       
+    #   # function is cached! let's call the cache_executor, who will execute or recover the result
+    #   if self.cache_exec is None: raise Exception, 'ERROR NodeSelector function {f} asks to be cached but there is no cached_executor!'.format(f=fname)
+    #   return self.cache_exec.cache_execute(   self.get_function(fname), *args, **kargs  )
+
+  def set_function_from_coordinate_selector(self, function_name, coordinate_selector): 
+    """ Calls a CoordinateSelector to set a proper function in this ns based on its current attributes"""
+    coordinate_selector.decorate_node_selector(self, function_name)
+
+  # function boundaries
+  def compute_boundaries_for_function(self, fname):
+    """ Computes the min and max values for a certain function, by running the function for each node"""
+    the_min=None; the_max=None
+    for node in self:
+      x=self.get_value_for_node(node, fname)
+      if the_min is None or x<the_min: the_min=x
+      if the_max is None or x>the_max: the_max=x
+    self.set_boundaries_for_function(fname, the_min, the_max) 
+ 
+  def reset_boundaries_for_function(self, fname): 
+    if hasattr(self, 'boundaries_per_fn') and not self.boundaries_per_fn is None and fname in self.boundaries_per_fn:
+      del self.boundaries_per_fn[fname]
+
+  def set_boundaries_for_function(self, fname, the_min, the_max):
+    if not hasattr(self, 'boundaries_per_fn') or self.boundaries_per_fn is None: self.boundaries_per_fn={}
+    self.boundaries_per_fn[fname]=[the_min, the_max]
+  
+  def get_boundaries_for_function(self, fname):
+    if not hasattr(self, 'boundaries_per_fn') or self.boundaries_per_fn is None or not fname in self.boundaries_per_fn:
+      self.compute_boundaries_for_function(fname)
+    return self.boundaries_per_fn[fname]
+#########
+
+
+
 
 class DistanceBarFace(faces.StackedBarFace): #, view_manager_gui_actions):
   """ StackedBarFace modified to represent a single value. Two colors are considered (c1, c2), the representation will be something like:
@@ -156,7 +310,7 @@ Subclasses of FaceController must define:
     NodeSelector.__init__(self)
     self.start_column=0
     self.title_item=None
-    self.title=title if title else  capitalize(str(self.name))
+    self.title=title if title else  str(self.name).capitalize()
     self.title_style=title_style
     if nodes: self.add_nodes(nodes)
     self.state='folded'
@@ -171,7 +325,7 @@ Subclasses of FaceController must define:
   def Data(self):
     if not self.nodes: return None
     else:              
-      for n in self.nodes: return n.Data()
+      for n in self.nodes: return n.master()
 
   def get_title(self):         return self.title
 
@@ -191,9 +345,9 @@ Subclasses of FaceController must define:
   def add_node(self, node): 
     if not self.has_node(node):
       NodeSelector.add_node(self, node)
-      if not node.Data().columns().has_column(   self.get_title()   ):
+      if not node.master().columns().has_column(   self.get_title()   ):
         print 'adding column while adding to node ', node.name
-        node.Data().columns().add_column(self)
+        node.master().columns().add_column(self)
       node.face_controllers.add(self)
 
   def get_faces(self, node, **kargs):    raise Exception, "FaceController ERROR get_faces method must be defined in subclasses!"
@@ -242,12 +396,38 @@ Subclasses of FaceController must define:
     masterItem.face_controller=self
     return masterItem
 
+
+################## ONLY ONE FUNCTIONAL ################## 
+class FeatureNameFaceController(FaceController):
+  """ Simple Text Face for a feature"""
+  title_item_class=InvisibleTitleItem
+
+  def n_columns(self): return 1
+  def __init__(self, **kargs):
+    FaceController.__init__(self, **kargs)
+    self.title= 'NAME'
+    self.set_text_color_control(None)
+
+  def get_faces(self, node, set_drawn=True):
+    #write('get faces ffc '+self.title, 1, how='yellow')
+    feat_to_show =  node.name #get_feature(self.feature_selector) # getattr(node, self.feature_selector.feature_name) # 
+    #feat_to_show2 =  node.Data().features()[self.feature_name].get_feature_for_node(node)
+    #if feat_to_show != feat_to_show2: raise Exception, str(feat_to_show)+ ' ' +str(feat_to_show2)
+    the_color= 'black' if self.text_color_control is None else self.text_color_control.get_color_for_node(node)
+    tf=TextFace(feat_to_show, fgcolor=the_color)
+    if set_drawn: self.set_drawn(node, 1)
+    return [ tf ]
+
+  def set_text_color_control(self, color_control):
+    self.text_color_control = color_control
+################## ################## ################## ################## 
+
+
 class FeatureFaceController(FaceController):
   """ Simple Text Face for a feature"""
   title_item_class=InvisibleTitleItem
 
   def n_columns(self): return 1
-
   def __init__(self, feature_selector, **kargs):
     FaceController.__init__(self, **kargs)
     self.feature_selector=feature_selector
@@ -255,10 +435,8 @@ class FeatureFaceController(FaceController):
     self.set_text_color_control(None)
 
   def get_faces(self, node, set_drawn=True):
-
     #write('get faces ffc '+self.title, 1, how='yellow')
     feat_to_show =  node.get_feature(self.feature_selector) # getattr(node, self.feature_selector.feature_name) # 
-
     #feat_to_show2 =  node.Data().features()[self.feature_name].get_feature_for_node(node)
     #if feat_to_show != feat_to_show2: raise Exception, str(feat_to_show)+ ' ' +str(feat_to_show2)
     the_color= 'black' if self.text_color_control is None else self.text_color_control.get_color_for_node(node)

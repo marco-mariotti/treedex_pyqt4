@@ -1,2 +1,2 @@
 #from .baseplots import *
-from scatterplot import ScatterPlotWindow
+from scatterplot import ScatterPlotWindow, NodeScatterPlotItem

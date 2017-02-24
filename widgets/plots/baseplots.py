@@ -1,6 +1,8 @@
+print 'module baseplots'
 from ..base import *
 from ...data  import *
 from ...common import *
+from ..datawidgets import *
 import pyqtgraph as pg
 
 def set_black_theme():
@@ -14,13 +16,83 @@ def set_white_theme():
   pg.setConfigOption('foreground', 'k')
 set_white_theme()
 
+
+coordinate_names=['x', 'y', 'z']
 ######################################################################
 ############################################# Base class #############
-class PlotWindow(TreedexWindow): 
-  """ Motherclass for all windows of plots  """
-  def Master(self): return self.master_link
-  def update_axis(self): pass
-  def add_toolbar(self, tb):    self.toolbar_layout.addWidget(tb)
+class PlotWindow(TreedexWindow, DC_container): 
+  """ Motherclass for all windows of plots. Every subclass must define:
+Class attributes:
+  -available_plot_items    list of PlotItem subclasses that be added with self.add_plot_item
+  -dimensions              integer. Used for high-level manipulation of axis labels
+Instance attributes:
+  -menu_layout             here the active menus will be added
+Methods:
+  -set_axis_label(self, index_dimension, label)     set this label as axis for the plot
+  """
+  available_plot_items=[]
+  dimensions=None
+  #default_plot_options={'auto_axis_labels':True}
+  def __init__(self, master_link): 
+    self.container=master_link
+    super(PlotWindow, self).__init__()
+    self.plot_items=[]
+    self.active_menu=[]     ## plot_item, category, menu, button
+    self.axis_labels=[]
+    #self.plot_options=deepcopy(self.default_plot_options)
+
+  def master(self): return self.container
+  def window_identifier(self): return {'category': self.__class__.__name__}
+
+  def add_plot_item(self, piclass, options=None):
+    """ Init a plotitem class with options and add it to the plot_object of this window. 
+       No need to reimplement this for window subclasses. The majority of the job is done actually in the __init__ of the plotitems"""
+    if options is None: options={}
+    if not 'name' in options:
+      #for pi in self.plot_items:
+      #  print pi.plot_type, piclass.plot_type, pi.plot_type==piclass.plot_type
+      index=len([1 for pi in self.plot_items if pi.plot_type==piclass.plot_type])+1
+      name='{}.{}'.format(piclass.plot_type, index)
+      options['name']=name
+    pi=piclass(self.plot_object, options=options)
+    self.plot_items.append(pi)
+    tb=pi.toolbar_class(pi)
+    tb.setAutoFillBackground(True)
+    pi.toolbar=tb
+    self.toolbar_layout.addWidget(tb)
+    self.update_axis()
+    return pi
+    
+  def remove_plot_item(self, pi):
+    pi.delete_item()
+    index=self.plot_items.index(pi)
+    self.plot_items.pop(index)
+    clear_layout(self.toolbar_layout, index=index)
+    self.update_axis()
+
+  def hide_menu(self):
+    #write('hide menu!', 1)
+    if self.active_menu:
+      #self.active_menu[2].setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+      self.active_menu[3].setStyleSheet( self.active_menu[3].stylesheet  ) # back to basic style
+      clear_layout(self.menu_layout)
+      #for i in reversed(range(self.menu_layout.count())):      self.menu_layout.itemAt(i).widget().deleteLater()
+      self.active_menu[0].toolbar.active_label.setText('')
+    self.active_menu=[]
+
+  def update_axis(self):
+    self.axis_labels=[]
+    for dim in range(self.dimensions):
+      # coord_name=coordinate_names[dim]
+      label_pieces=[]
+      for pi in self.plot_items:
+        header=pi.headers[dim]
+        if not header in label_pieces: label_pieces.append(header)
+      label=' | '.join(label_pieces)      
+      self.axis_labels.append(label)
+
+    for dim, label  in enumerate(self.axis_labels):      
+      self.set_axis_label(dim, label)  #class specific method
 
   # def get_plot_items(self): return self.plot_items
 
@@ -64,37 +136,102 @@ class PlotWindow(TreedexWindow):
 
 #####################################################################################
 class PlotItem(object):
-  defaults={ 'main_dc':None }
-  name=None
+  """A PlotItem corresponds to a bunch of graphical items ('components') with the same basic source data. For example, you have the scatterplot dots and their labels.
+  Init with the parent plot_object and options, which contain all input/parameters/options. This is stored in self.options.
+  Node coordinate input is of course a DataChannel. There's a main one which act as root for all others (dc); this can be then further enriched for specific PlotItem components.
+ """
+  defaults={'name':None}
+  plot_type=None 
   toolbar_class=None
   ## key:  value         or   key:  {subkey: subvalue, subkey2: subvalue2}
   def __init__(self, plot_object, options):
     self.plot_object=plot_object
-    self.options=dict(self.defaults)
-    for k in self.options: 
-      if k in options: self.options[k]=options[k]
+    self.options=deepcopy(self.defaults)  #this stores the current options of the plot
+    # copying from dict 
+    self.store_options(options, self.options) #updating self.options
+    self.init_data_channel()
+    self.options_drawn={}              #this stores the options used when the graphics were constructed
+    self.init_item()
+    self.store_plot_options()
+
+  def init_data_channel(self): pass
+
+  def store_headers(self, df, n):    
+    """ Keeps the column names of of the NumericFeatureSelector when plotted. Useful to store for axis labels"""
+    self.headers=[str(df.columns[i])  if not df is None else ''    for i in range(n)]
+
+  def copy_options(self):
+    out={}
+    self.store_options(self.options, out, dc_as_keys=True, copy=True)
+    return out
+    
+  def store_options(self, options, target, dc_as_keys=False, copy=False):
+    #self.stored_options={}
+    for k in options:
+      v=options[k]   
+      if dc_as_keys and isinstance(v, DataChannel): v=v.key(non_redundant=True) 
+      if isinstance(v, dict):
+        for subk in v.keys():
+          subv=v[subk]      
+          if dc_as_keys and isinstance(subv, DataChannel): subv=subv.key(non_redundant=True)
+          if copy:        subv=deepcopy(subv)
+          if not k in target: target[k]={}
+          target[k][subk]= subv
+      else:
+        if copy:        v=deepcopy(v)
+        target[k]=v
+  def store_plot_options(self): self.store_options(self.options, self.options_drawn, dc_as_keys=True, copy=True)   
+
+  def delta_options(self):
+    """ Return a set of the primary keys for which their corresponding values changed between self.options_drawn and self.options """
+    def different_values(a, b):
+      if isinstance(a, DataChannel):  
+        if a.has_antennas(): return True
+        a=a.key(non_redundant=True)
+      if isinstance(b, DataChannel):  
+        if b.has_antennas(): return True
+        b=b.key(non_redundant=True)        
+      return a!=b
+    out=set()
+    for k in self.options:
+      is_different=False
+      v=self.options[k]
+      if isinstance(v, dict):
+        for subk in v.keys():
+          subv=v[subk]
+          if different_values(self.options_drawn[k][subk], subv):  
+            is_different=True
+            break          
+      else:        
+        if different_values(self.options_drawn[k], v):            is_different=True
+      if is_different: out.add(k)
+    return out
 
   def update_options(self, options):
     for k in options:
-      v=options[k]
+      v=options[k]  #manually writing copy methods for total control
       if isinstance(v, dict):
         for subk in v.keys():
-          subv=d[subk]
+          subv=v[subk]
           self.options[k][subk]= subv
-      else:
-        self.options[k]=v
+      else:                         self.options[k]=v
 
-  def make_toolbar(self):    #raise Exception, "ERROR make_toolbar should be defined in subclasses"
-    tb=self.toolbar_class(self)
-    tb.setAutoFillBackground(True)
-    return tb
+  def init_item(self):   """Start up the plotItem; implemented in subclasses""";     raise Exception
+  def update_item(self): """Update the whole plotItem; implemented in subclasses"""; raise Exception   
+
+  # def make_toolbar(self):    #raise Exception, "ERROR make_toolbar should be defined in subclasses"
+  #   tb=self.toolbar_class(self)
+  #   tb.setAutoFillBackground(True)
+  #   return tb
 
 #####################################################################################
 class PlotObject(object):
+  """Canvas for PlotItem. Every PlotWindow has a single PlotObject, which can contain several PlotItem instances.
+  This is initialized in the init of the PlotWindow of every specific plot class. """
   #default_options= { 'click_action':'Highlight', 'show_highlight':True, 'show_select':False } 
   def __init__(self, options={}):    pass
     #self.options=dict(self.default_options);  self.options.update(options)  #plot options
-  def Master(self): return self.plot_window.Master()
+  def master(self): return self.plot_window.master()
   # def get_window_options(self): 
   #   return self.plot_window.get_options()
   # def get_options(self):
@@ -118,17 +255,99 @@ class ToolbarDataMenu(ToolbarMenu):
     super(ToolbarDataMenu, self).__init__(plot_item=plot_item)
     self.layout=QtGui.QVBoxLayout()
     self.setLayout(self.layout)
-    self.layout.addWidget(  QtGui.QLabel('fanfara')   )
+    dc=self.plot_item.options['dc']
+    dcw=DataChannelWidget(dc, within='Plot')
+    dc_layout=QtGui.QHBoxLayout()
+    dc_layout.addWidget(QtGui.QLabel('Plot Data:'))
+    dc_layout.addWidget(dcw)
+    dc_layout.addStretch()
+    self.layout.addLayout(dc_layout)
+ 
+    # for coord_index in range(self.plot_item.plot_object.plot_window.dimensions):
+    #   coord=coordinate_names[coord_index]
+    #   coord_layout=QtGui.QHBoxLayout();  coord_layout.addSpacing(30)
+    #   coord_layout.addWidget(QtGui.QLabel('{} coordinate:'.format(coord)))
+    #   coord_dc=self.plot_item.options[coord]
+    #   coord_dcw=DataChannelWidget(coord_dc, within='Plot')
+    #   coord_layout.addWidget(coord_dcw)
+    #   coord_layout.addStretch()
+    #   self.layout.addLayout(coord_layout)
+  ## no need for active feedback since: the DCs are already connected to self.plot_item.update_item
+
+
+class ToolbarPlotitemMenu(ToolbarMenu):
+  """ """
+  def __init__(self, plot_item):
+    super(ToolbarPlotitemMenu, self).__init__(plot_item=plot_item)
+    self.layout=QtGui.QVBoxLayout()
+    self.setLayout(self.layout)
+    row1=QtGui.QHBoxLayout()
+    row1.addWidget(QtGui.QLabel('Type:'))
+    row1.addWidget(QtGui.QLabel(self.plot_item.plot_type))
+    row1.addWidget(VerticalLine('lightgrey'))
+    row1.addWidget(QtGui.QLabel('Name:'))   
+    current_name=self.plot_item.options['name']
+    self.name_textbox=QtGui.QLineEdit()
+    self.name_textbox.setText(current_name)
+    self.name_textbox.editingFinished.connect(self.edited_plot_item_name)
+    row1.addWidget(self.name_textbox)
+    row1.addWidget(VerticalLine('lightgrey'))
+    delete_button=QtGui.QPushButton('Delete this plot item')
+    delete_button.clicked.connect(self.clicked_delete_plot_item)
+    if len(self.plot_item.plot_object.plot_window.plot_items)<2: delete_button.setVisible(False)
+    row1.addWidget(delete_button)
+    row1.addStretch()
+    self.layout.addLayout(row1)
+    self.layout.addWidget(HorizontalLine())
+    
+    row2=QtGui.QHBoxLayout()
+    label=QtGui.QLabel('Plot'); label.setStyleSheet('color:red'); row2.addWidget(label)
+    self.layout.addLayout(row2)    
+    
+    row3=QtGui.QHBoxLayout();  row3.addSpacing(10)
+    row3.addWidget(QtGui.QLabel('Add plot item:'))
+    duplicate_button=QtGui.QPushButton('duplicate this')
+    duplicate_button.clicked.connect(self.clicked_duplicate_plot_item)
+    row3.addWidget(duplicate_button)
+    row3.addWidget(QtGui.QLabel('  or add empty '))    
+    for piclass in self.plot_item.plot_object.plot_window.available_plot_items:
+      pi_button=ToolButton(piclass.plot_type, piclass.plot_type, lambda s,piclass=piclass:self.clicked_add_plot_item(piclass))
+      pi_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+      row3.addWidget(pi_button)
+    row3.addStretch()
+    self.layout.addLayout(row3)
+
+  def edited_plot_item_name(self):
+    text=str(self.name_textbox.text())
+    self.plot_item.options['name']=text
+    self.plot_item.update_item()
+  def clicked_delete_plot_item(self):
+    pressed_button=QtGui.QMessageBox.warning(self, 'Warning', 'This will remove all the graphical elements related to the plot item "{}". Are you sure?'.format(self.plot_item.options['name']), QtGui.QMessageBox.Cancel, QtGui.QMessageBox.Ok)
+    if pressed_button==QtGui.QMessageBox.Cancel: return
+    self.plot_item.plot_object.plot_window.remove_plot_item(self.plot_item)
+    self.plot_item.plot_object.plot_window.hide_menu()
+
+  def clicked_duplicate_plot_item(self):    
+    piclass=self.plot_item.__class__
+    options=self.plot_item.copy_options()
+    options['name']+="'"
+    self.plot_item.plot_object.plot_window.add_plot_item(piclass, options)
+
+  def clicked_add_plot_item(self, piclass):
+    self.plot_item.plot_object.plot_window.add_plot_item(piclass) #empty options => default
+    
 
 ####################################################################################
 class PlotItemToolbar(QtGui.QWidget):
   """Mother class for plot toolbars """
+  plotitem_menu=ToolbarPlotitemMenu
   data_menu=ToolbarDataMenu
+  view_menu=None   #must be defined in subclasses
 
   def __init__(self, plot_item): 
     super(PlotItemToolbar, self).__init__() #    QtGui.QWidget.__init__(self)  
     self.plot_item=plot_item
-    self.active_menu=[]   # category, menu, button
+    #self.active_menu=[]   # category, menu, button
     #self.plot_title=plot_title
     sizePolicy = QtGui.QSizePolicy(QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Fixed)
     self.setSizePolicy(sizePolicy)
@@ -137,20 +356,22 @@ class PlotItemToolbar(QtGui.QWidget):
     self.layout=QtGui.QHBoxLayout();         self.layout.setContentsMargins(0, 0, 0, 0);          self.layout.setSpacing(0)
     self.label=QtGui.QLabel('  ')
     self.layout.addWidget(self.label)
-    self.menu_layout=QtGui.QVBoxLayout();    self.menu_layout.setContentsMargins(0, 0, 0, 0);     self.menu_layout.setSpacing(0)
+    #self.menu_layout=QtGui.QVBoxLayout();    self.menu_layout.setContentsMargins(0, 0, 0, 0);     self.menu_layout.setSpacing(0)
     self.main_layout.addLayout(self.layout)
-    self.main_layout.addLayout(self.menu_layout)
-    self.main_layout.addWidget(HorizontalLine())
+    #self.main_layout.addLayout(self.menu_layout)
+    self.main_layout.addWidget(HorizontalLine('grey'))
     
     #buttons:
-    self.plotitem_button=ToolbarToolButton(self.plot_item.name, 'Plot item', self.plotitem_button_was_clicked)
+    self.plotitem_label=QtGui.QLabel(self.plot_item.options['name'])
+    self.plotitem_button=ToolbarToolButton(self.plot_item.plot_type, 'Plot item', self.plotitem_button_was_clicked)
+    self.layout.addWidget(self.plotitem_label)
     self.layout.addWidget(self.plotitem_button)
     self.layout.addWidget(VerticalLine())
 
     self.data_button=ToolbarToolButton('targetdata', 'Input', self.data_button_was_clicked)
     self.layout.addWidget(self.data_button)
-    # self.view_button=TreedexToolButton('view.icon.png', 'View', self.view_button_was_clicked)
-    # self.layout.addWidget(self.view_button)
+    self.view_button=ToolbarToolButton('view', 'View', self.view_button_was_clicked)
+    self.layout.addWidget(self.view_button)
     # self.ancestors_button=TreedexToolButton('ancestors.icon.png', 'Ancestors', self.ancestors_button_was_clicked)
     # self.layout.addWidget(self.ancestors_button)
 
@@ -175,36 +396,25 @@ class PlotItemToolbar(QtGui.QWidget):
   # def get_plot_window(self):  return self.get_plot_item().get_plot_window()
   # def get_plot_object(self):  return self.get_plot_item().get_plot_object()
 
-  def hide_menu(self):
-    write('hide menu!', 1)
-    if self.active_menu:
-      #self.active_menu[2].setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
-      self.active_menu[2].setStyleSheet( self.active_menu[2].stylesheet  ) # back to basic style
-      for i in reversed(range(self.menu_layout.count())):      self.menu_layout.itemAt(i).widget().deleteLater()
-      self.active_label.setText('')
-    self.active_menu=[]
-
   def button_was_clicked(self, key, menu_class, button):
     """ Prototype for any of the buttons being clicked """
-    if self.active_menu:
-      if self.active_menu[0]==key: return self.hide_menu()  #second click; just hide existing menu
-      else:                               self.hide_menu()
+    win=self.plot_item.plot_object.plot_window
+    if win.active_menu:
+      if win.active_menu[1]==key and self.plot_item==win.active_menu[0]: return win.hide_menu()  #second click; just hide existing menu
+      else:                                                                     win.hide_menu()
     self.active_label.setText(key.capitalize())
     menu=menu_class(self.plot_item)
-    hline= HorizontalLine()
-    hline.setStyleSheet('QFrame {color:lightgrey }')
-    self.menu_layout.addWidget(hline)
-    self.menu_layout.addWidget(menu)
+    menu.setAutoFillBackground(True)
+    win.menu_layout.addWidget(HorizontalLine('lightgrey'))
+    win.menu_layout.addWidget(menu)
     button.setStyleSheet(button.stylesheet_active)
-    self.active_menu=[key, menu, button]
+    win.active_menu=[self.plot_item, key, menu, button]
 
+  def plotitem_button_was_clicked(self):       self.button_was_clicked('plotitem',  self.plotitem_menu,   self.plotitem_button)
   def data_button_was_clicked(self):           self.button_was_clicked('data',      self.data_menu,      self.data_button)
-  # def view_button_was_clicked(self):           self.button_was_clicked('view',      ScatterplotItemViewMenu,      self.view_button)
+  def view_button_was_clicked(self):           self.button_was_clicked('view',      self.view_menu,      self.view_button)
   # def ancestors_button_was_clicked(self):      self.button_was_clicked('ancestors', PlotItemAncestorsMenu, self.ancestors_button)
-  def plotitem_button_was_clicked(self):       
-    pass
     #self.button_was_clicked('plotitem',  PlotItemPlotMenu,      self.plotitem_button)
   # def tables_button_was_clicked(self):         self.button_was_clicked('tables',    PlotItemTablesMenu,    self.tables_button)
   # def stats_button_was_clicked(self):          self.button_was_clicked('stats',     PlotItemStatsMenu,     self.stats_button)
-
 
