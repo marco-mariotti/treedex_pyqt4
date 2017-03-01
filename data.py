@@ -581,13 +581,23 @@ class DCO_aggregate(DataChannelOperation):           ### Finish/add transform
 
 class DCO_join(DataChannelOperation):
   name='join'
-  """Init with:             db_name&field    e.g.  Metabolome&Node
+  """Init with:             db_name&field    e.g.  Metabolome&Node         or   :cache_name&field
   Default field is actually 'Node', in that case this can be omitted
   """
   def action(self, df):    
-    dbname, field=self.interpreted_params(df).split('&') 
+    x=self.interpreted_params(df)
+    dbname, field=x.split('&') 
     if not field: field='Node'         #if field.count(','): field=field.split(',')  #needs multi index
-    df2=self.container.master().features().get_dataframe(dbname)
+    if dbname.startswith(':'): #actually a cache!
+      df2=self  #flag
+      p=self.container
+      while not p is None:
+        if p.has_cache(dbname[1:]): df2=p.retrieve_cache(dbname[1:]); break     
+        p=p.container
+      if df2 is self: raise Exception, "'join' component: cache requested not found! {}".format(dbname)
+    else: #db
+      df2=self.container.master().features().get_dataframe(dbname)
+    if df2 is None: raise Exception, "'join' component: joining with 'None' dataframe!"
     if df2.index.name!=field:      df2=df2.set_index(field)
     return df.join(df2, on=field)
 DCO=DataChannelOperation

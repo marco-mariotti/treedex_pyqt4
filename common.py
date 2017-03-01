@@ -6,6 +6,9 @@ from string import lowercase, uppercase, digits #, lower, upper
 import sys
 from copy import deepcopy
 
+class NodeSelector(set):
+  """ """
+
 def rescale(x, ymin, ymax, xmin=0.0, xmax=1.0):  
   """Generic function to compute proportions; it rescales proportionally an 
   input x, which is between xmin and xmax, to output y, which is between ymin and ymax """

@@ -4,15 +4,11 @@ from .facecontroller import *
 from .widgets import *
 #from PyQt4   import QtGui,QtCore  ### NOTE: in the future you may want to get rid of QtGui here!  #  --> imported by facecontroller
 
-class NodeSelector(set):
-  """ """
-
-
 
 def annotated_tree_layout(node):
   """ Used by AnnotatedTree as default layout"""
   node.img_style['size']=7
-  node.img_style['fgcolor']='grey'    #node.Data().colors().get_default_colormap().get_color_for_node(node)
+  node.img_style['fgcolor']=node.master().colors().node_color_maps['default'][node.name] if node.is_leaf() else 'grey'
   if   node.is_leaf():   node.img_style['shape']='circle'
   elif node.is_root():   node.img_style['shape']='square'
   else:                  node.img_style['shape']='triangle'

@@ -81,6 +81,7 @@ Methods:
     self.active_menu=[]
 
   def update_axis(self):
+    print 'updating axissssss'
     self.axis_labels=[]
     for dim in range(self.dimensions):
       # coord_name=coordinate_names[dim]

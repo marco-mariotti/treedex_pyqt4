@@ -281,8 +281,21 @@ class DCOW_join(DCOW):
     self.setLayout(self.layout)
     splt=(self.dco.parameters if not self.dco.parameters is None else '').split('&')
     if len(splt)<2: field='Node'
-    else:           _,field=splt
-    self.combobox=QtGui.QComboBox() ## !
+    else:           dbname,field=splt
+    
+    row1=QtGui.QHBoxLayout(); row1.setContentsMargins(0,0,0,0); row1.setSpacing(0)
+    row1.addWidget(QtGui.QLabel('with'))
+    self.type_combobox=QtGui.QComboBox()
+    self.type_combobox.addItem('database')
+    self.type_combobox.addItem('cache')
+    self.type_combobox.activated[int].connect( self.activated_type_combobox )
+    row1.addWidget(self.type_combobox)
+    self.layout.addLayout(row1)
+
+    self.cache_textbox=QtGui.QLineEdit()
+    self.layout.addWidget(self.cache_textbox)
+
+    self.combobox=QtGui.QComboBox() 
     self.fill_combobox()
     self.combobox.activated[int].connect( lambda selection_index:self.activated_combobox(selection_index) )
     self.dcw.dc.master().features().signal_dataframe_list_changed.connect(  self.fill_combobox  )  
@@ -290,13 +303,18 @@ class DCOW_join(DCOW):
     self.on_field_textbox=QtGui.QLineEdit()
     self.on_field_textbox.setText(field)
     self.layout.addWidget(self.on_field_textbox)   
+    self.activated_type_combobox( int( bool(self.dco.parameters and self.dco.parameters.startswith(':')) )  )  #this shows/hide the right stuff, sets text of self.
+
 
   def save(self):
     field=str(self.on_field_textbox.text()).strip()
     if field: field='&'+field
-    selection_index=self.selection_index
-    av_dfs=self.dcw.dc.get_available_dataframes()
-    db_name=av_dfs[selection_index] if av_dfs else None
+    if self.type_combobox.currentIndex():  #cache
+      db_name=':'+str(self.cache_textbox.text()).strip()
+    else:
+      selection_index=self.selection_index
+      av_dfs=self.dcw.dc.get_available_dataframes()
+      db_name=av_dfs[selection_index] if av_dfs else None
     new_text=db_name+field
     self.update_dco(new_text)
 
@@ -324,6 +342,16 @@ class DCOW_join(DCOW):
     else:                            
       self.open_feature_loader()
       self.combobox.setCurrentIndex(self.selection_index)  #going back to previous item selected
+
+  def activated_type_combobox(self, index):
+    if index==0: #db type selected
+      self.combobox.setVisible(True)
+      self.cache_textbox.setVisible(False)
+    else:        #cache
+      self.combobox.setVisible(False)
+      self.cache_textbox.setVisible(True)
+      if self.dco.parameters and self.dco.parameters.startswith(':'): self.cache_textbox.setText( self.dco.parameters[1:] )
+        
   
   def open_feature_loader(self):
     print 'Load new features!'  
@@ -350,7 +378,8 @@ class DCOW_select(DCOW):
     self.layout.addWidget(self.checkbox)
 
   def save(self):
-    new_text= str(self.textbox.text()).strip().strip(',').strip()
+    new_text=str(self.textbox.text()).strip().strip(',').strip()
+    new_text= ','.join([s.strip()   for s in new_text.split(',')])
     if self.checkbox.isChecked(): new_text='Node,'+new_text
     if not new_text:    new_text=None
     self.update_dco(new_text)
@@ -677,8 +706,25 @@ DCO_categories=[ ['Start', ['database', 'retrieve', 'antenna', 'generator']],\
                  ['DC management', ['cache', 'define', 'var', 'call', 'group']],\
                  ['Tree', ['trace']],\
                ]
-DCO_descriptions={'database':'Start with a data-frame table', 
-                  'select':'Select one or more columns',}
+DCO_descriptions={'database':   'Start with a dataframe table from a file', 
+                  'retrieve':   'Resume from a dataframe previously cached', 
+                  'antenna':    'Get current selection, dynamically updated', 
+                  'generator':  'Create a dataframe with arbitrary shape',
+                  'filter':     'Keep only the rows that pass a certain condition',
+                  'append':     'Stack rows to an existing dataframe',
+                  'aggregate':  'Group and merge rows (e.g. by averaging)',
+                  'transform':  'Rank rows or fit them to a distribution',
+                  'select':     'Select one or more columns',
+                  'rename':     'Change the name of one or more columns',
+                  'process':    'Create or modify any existing columns',
+                  'compute':    'Create or modify existing numerical columns',
+                  'join':       'Join with an existing dataframe',
+                  'cache':      'Store current dataframe for later retrieval',
+                  'define':     'Define a custom routine',
+                  'var':        'Declare a variable, then available in next components',
+                  'call':       'Use a previously defined routine',
+                  'group':      'Assemble multiple components into one',
+                  'trace':      'Perform ancestral state reconstruction',              }
 DCO_name2widget={'database':DCOW_database, 'select':DCOW_select, 'filter':DCOW_filter, 'process':DCOW_process, 'compute':DCOW_compute, 'rename':DCOW_rename, 'aggregate':DCOW_aggregate, 'join':DCOW_join, 'cache':DCOW_cache, 'retrieve':DCOW_retrieve, 'define':DCOW_define, 'call':DCOW_call, 'antenna':DCOW_antenna, 'generator':DCOW_generator, 'group':DCOW_group, 'var':DCOW_var}
 
 
@@ -689,7 +735,7 @@ class ExtendDataChannelWidget(QtGui.QWidget):
   def __init__(self, dcw, dco_index):
     super(ExtendDataChannelWidget, self).__init__() #    QtGui.QWidget.__init__(self)  
     self.dcw=dcw; self.dco_index=dco_index
-    vlayout=QtGui.QVBoxLayout()
+    vlayout=QtGui.QVBoxLayout(); vlayout.setContentsMargins(1, 1, 1, 1);     vlayout.setSpacing(2)    
     self.setLayout(vlayout)
     self.setWindowTitle('Add Data Channel component...')
     self.setWindowFlags(QtCore.Qt.FramelessWindowHint)

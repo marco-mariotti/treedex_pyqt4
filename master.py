@@ -3,6 +3,7 @@ from .common import *
 from .data  import *
 from .facecontroller import *
 from .widgets import *
+from  colorsys import rgb_to_hsv, hsv_to_rgb
 
 class MasterContainer(dict, DC_container):
   """ Data storage object; there is one per tree, contains all the information for the GUI (e.g. what is selected, what windows are opened), as well as all features and associated statistics.
@@ -30,7 +31,7 @@ class MasterContainer(dict, DC_container):
     self['windows']=   WindowManager(master_link=self)
     self['trees']=     TreeManager(master_link=self)
     #self['views']  =   ViewManager(data_link=self)
-    #self['colors']=    ColormapManager(data_link=self)
+    self['colors']=    ColorManager(master_link=self)
     self.container=None
     DC_container.__init__(self)
    
@@ -48,7 +49,7 @@ class MasterContainer(dict, DC_container):
   # def session(self):     return self['session']
   def selections(self):   return self['selections']
   def columns(self):      return self['columns']
-  # def colors(self):      return self['colors']
+  def colors(self):      return self['colors']
   # def redraw(self):      
   #   fc=self.columns().get_column(index=1)
   #   fc.drawn={}
@@ -88,6 +89,8 @@ class TreeManager(Manager):
     #for n in tree.traverse(): n.master_link=self.master_link    
     self.master_link.selections().add_node_selection('All nodes', NodeSelector([n for n in tree]))  ## this should be treated better   
     tree.name2node={ n.name: n  for n in tree.traverse() }      
+    
+    self.master_link.colors().add_node_color_map(tree, name)
     ### add controls etc 
   
   def get_tree(self, name=None): return self.trees[name] if not name is None else self.default_tree
@@ -124,6 +127,7 @@ class TreeManager(Manager):
     if tree is None: tree=self.default_tree
     return tree.name2node[name]
 
+###################################################################################################################
 class WindowManager(Manager):
   def __init__(self, master_link): 
     Manager.__init__(self, master_link)
@@ -234,6 +238,58 @@ class ColumnManager(Manager):
     if not name is None: return name in self.name2column 
     else:                return index in self.index2name
 
+###################################################################################################################
+class ColorManager(Manager):
+  def __init__(self, master_link): 
+    Manager.__init__(self, master_link)
+    self.node_color_maps={}   #name of tree ->  {node to color}   color like #rrggbb in hex
+
+  def add_node_color_map(self, tree, tree_name):
+      node2order={n:i  for i, n in enumerate(tree)}
+      ticks= [(0.0, (255, 0, 153, 255)), (1, (255, 115, 0, 255))]
+      mode= 'hsv'
+      vmin, vmax = 0.0, float(len(node2order)-1)
+      node2color={} #node:self.get_color_for_node(node)       for node in nodes}
+      for node in tree:
+        vnode=  node2order[node]  #self.get_value_for_node(node, 'gradient_value')
+        x=rescale(vnode, 0.0, 1.0, vmin, vmax)  # between 0.0 and 1.0
+       
+        ### following code is adapted from pg.widgets.GradientEditorItem.getColor to have a good correspondance with the color in the gradient widget
+        #ticks = self.gradient['ticks'] #listTicks()
+        if x <= ticks[0][0]:
+          r,g,b,_ = ticks[0][1]
+        elif x >= ticks[-1][0]:
+          r,g,b,_ = ticks[-1][1]
+        else:
+          x2 = ticks[0][0]
+          for i in range(1,len(ticks)):
+            x1 = x2
+            x2 = ticks[i][0]
+            if x1 <= x and x2 >= x:
+              break
+          dx = (x2-x1)
+          if dx == 0:          f = 0.
+          else:                f = (x-x1) / dx
+          c1 = ticks[i-1][1] #.color
+          c2 = ticks[i][1]   #.color
+          if mode  == 'rgb':
+            r = int( c1[0] * (1.-f) + c2[0] * f )
+            g = int( c1[1] * (1.-f) + c2[1] * f )
+            b = int( c1[2] * (1.-f) + c2[2] * f )
+            #a = 255 #c1[3] * (1.-f) + c2[3] * f
+          elif mode == 'hsv':
+            r1,g1,b1=c1[:3] #0-255 
+            r2,g2,b2=c2[:3] #0-255
+            h1,s1,v1=rgb_to_hsv(r1/255.0, g1/255.0, b1/255.0)  #0-1
+            h2,s2,v2=rgb_to_hsv(r2/255.0, g2/255.0, b2/255.0)  #0-1
+            h = h1 * (1.-f) + h2 * f
+            s = s1 * (1.-f) + s2 * f
+            v = v1 * (1.-f) + v2 * f
+            r,g,b= map(lambda x: int(x*255),  hsv_to_rgb(h,s,v))     #0-255
+
+        color='#{r:02X}{g:02X}{b:02X}'.format(r=r, g=g, b=b)
+        node2color[node.name]=color
+      self.node_color_maps[tree_name]=node2color
 
 ###################################################################################################################
 class FeatureManager(Manager):
