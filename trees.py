@@ -5,10 +5,11 @@ from .widgets import *
 #from PyQt4   import QtGui,QtCore  ### NOTE: in the future you may want to get rid of QtGui here!  #  --> imported by facecontroller
 
 
+
 def annotated_tree_layout(node):
   """ Used by AnnotatedTree as default layout"""
   node.img_style['size']=7
-  node.img_style['fgcolor']=node.master().colors().node_color_maps['default'][node.name] if node.is_leaf() else 'grey'
+  #node.img_style['fgcolor']=node.master().colors().node_color_maps['default'][node.name] if node.is_leaf() else 'grey'
   if   node.is_leaf():   node.img_style['shape']='circle'
   elif node.is_root():   node.img_style['shape']='square'
   else:                  node.img_style['shape']='triangle'
@@ -29,20 +30,28 @@ class AnnotatedTree(PhyloTree):
   Create AnnotatedTree using a newick input (text or file).
 """
 
-  def __init__(self, newick=None,  master_link=None, *args, **kwargs ): 
+  def __init__(self, newick=None,  master_link=None, tree_name=None, *args, **kwargs ): 
     PhyloTree.__init__(self, newick=newick, *args, **kwargs)
     self.face_controllers=set() 
     self.actions=[self.action_delegator]  #see below this class    
-    if not newick is None: self.init_for_tree(master_link)   # just finished loading; this is the root      
+    if not newick is None: self.init_for_tree(master_link, tree_name)   # just finished loading; this is the root      
 
-  def init_for_tree(self, master_link):
+  def init_for_tree(self, master_link, tree_name):
     """ Ran once per tree - not per node"""
     print 'init for tree'
     for n in self.traverse(): n.master_link=master_link    
 
+    self.tree_name=tree_name
     self.tree_style=None
     #self.init_master()
     self.fill_node_names()
+    self.name2node= { n.name: n  for n in self.traverse() }      
+    self.name2order=None #leaf_name:0-index top to bottom         #{ n.name: i  for i, n in enumerate(self) }      
+    #self.recompute_order()   ---> this is called at the end of __init__ (see master.add_tree)
+    for n in self.traverse():
+      if not n.up:     n.time=0.0; continue
+      n.time=n.up.time+n.dist
+
     name_face_controller = FeatureNameFaceController()
     all_leaves= [n for n in self.traverse()]
     for n in all_leaves:  name_face_controller.add_node( n ) #adding all leaves
@@ -52,6 +61,11 @@ class AnnotatedTree(PhyloTree):
   #   root=self.get_tree_root()
   #   MasterContainer(tree_link=root)  #this will link:       for n in root.traverse(): n.data_link=x      
   def master(self):  return  self.master_link
+
+  def get_node(self, name): return self.name2node[name]
+  def recompute_order(self):   self.master_link.trees().update_tree_order(self.tree_name)
+
+  def copy_topology(self):  return Tree(newick=self.write())
 
   def show(self,  *args, **kwargs ):
     """ decorates the default show function to show faces by controllers, through the layout function of this class"""
@@ -63,7 +77,7 @@ class AnnotatedTree(PhyloTree):
       self.tree_style=ts
       #### old stuff
       number_of_columns= self.master().columns().n_columns()
-      write( self.master(), 1, how='blue')
+      #write( self.master(), 1, how='blue')
       for column_index in range(1, number_of_columns+1):
         controller=self.master().columns().get_column(index=column_index)
         indices= controller.column_indices()
@@ -72,9 +86,9 @@ class AnnotatedTree(PhyloTree):
         if the_title_item:      self.tree_style.aligned_header.add_face(the_title_item,  the_index  ) 
       ####### 
       kwargs['tree_style']=self.tree_style
-    qapp=QtGui.QApplication(["Treedex"])
+    if not 'qapp' in kwargs or not kwargs['qapp']:
+      kwargs['qapp']=QtGui.QApplication()
     #self.Data().init_windows()         ## just for logwindow, to rethink
-    kwargs['qapp']=qapp
     PhyloTree.show(self, *args, **kwargs)
 
   def fill_node_names(self, only_unnamed=True):
@@ -103,11 +117,26 @@ class AnnotatedTree(PhyloTree):
   #       contextMenu.exec_(QtGui.QCursor.pos())""" 
   #   menu.addSeparator()
   #   menu.addAction("Echo", self.echo)
+  def print_memory_tree(self):
+    print self.master().data().memory_tree.summary()
+
+  def open_console(self):
+    self.master().windows().open_console()
+          
+  def get_distance_from_root(self):
+    p=self;  o=0.0
+    while not p.up is None:   o+=p.dist; p=p.up
+    return o
 
   def open_menu(self):
     """ Right click on the node (in ETE)"""
     qmenu=QtGui.QMenu()
-    qmenu.addAction('Explore data', self.open_data_explorer  )
+    a=qmenu.addAction('Node: '+self.name);   a.setEnabled(False)
+
+    qmenu.addAction('Print memory tree', self.print_memory_tree  )
+    qmenu.addAction('Open python console', self.open_console  )
+
+    #qmenu.addAction('Explore data', self.open_data_explorer  )
     #qmenu.addAction('Open Scatterplot', self.open_scatterplot  )
     #qmenu.addAction('Edit', self.edit_data_channel  )
     qmenu.exec_(QtGui.QCursor.pos())
@@ -137,6 +166,7 @@ class AnnotatedTree(PhyloTree):
 
   def echo(self):    print 'echooooo'
   def scene(self):   return self.master_link.columns().get_column(index=1).title_item.scene() 
+  def redraw(self):  self.scene().GUI.redraw()
 
   def face_area_size(self):
     """ Return the [width, height] in pixels of the area for the faces of this node"""
@@ -195,26 +225,10 @@ class AnnotatedTree(PhyloTree):
   # continue: AnnotatedTree
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  def traverse_by_level(self):
-    """ Like traverse, but returns (relative_level, node) instead.   The first element will always be (0, self) """
+  def traverse_by_level(self, exclude_fn=None):
+    """ Like traverse, but returns (relative_level, node) instead.   The first element will always be (0, self) 
+    if you provide exclude_fn, this is tested to stop traversing from that node (these nodes are never returned)
+    """
     tovisit = [self]
     level=0
     next_level_flag= object()
@@ -222,6 +236,8 @@ class AnnotatedTree(PhyloTree):
       node = tovisit.pop(0)
       if node == next_level_flag:
         level+=1
+        continue
+      if not exclude_fn is None and exclude_fn(node): 
         continue
       yield (level, node)
       if not node.is_leaf():
@@ -235,8 +251,12 @@ class AnnotatedTree(PhyloTree):
       parent.children.sort(key= lambda x: 0 if x==child else 1)
       child=child.up
       parent=child.up
-    #self.redraw()
+    self.recompute_order()
 
+  def swap_children(self):
+    PhyloTree.swap_children(self)
+    self.recompute_order()
+    self.redraw()
 
 
 

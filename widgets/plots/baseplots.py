@@ -1,9 +1,7 @@
-print 'module baseplots'
 from ..base import *
 from ...data  import *
 from ...common import *
 from ..datawidgets import *
-import pyqtgraph as pg
 
 def set_black_theme():
   """Set the black theme for scatterplots; all those opened after this is called will be affected """
@@ -16,11 +14,22 @@ def set_white_theme():
   pg.setConfigOption('foreground', 'k')
 set_white_theme()
 
+NoDefault=object()
+def smart_get(what, local_options, df, row_i, default=NoDefault):
+  fallback_value=local_options[what] if default is NoDefault else default
+  if not what in df.columns:   return fallback_value
+  x=df.at[row_i, what]
+  try:
+    if pd.isnull(x):                   return fallback_value   #falls on default if no value for this row # is None or np.isnan(x)
+  except ValueError:
+    write( 'array given to isnull! df={}\n\nrow_i={} what={}\nx={}'.format(df, row_i, what, x), 1, how='red,reverse')
+    return fallback_value
+  return x
 
 coordinate_names=['x', 'y', 'z']
 ######################################################################
 ############################################# Base class #############
-class PlotWindow(TreedexWindow, DC_container): 
+class PlotWindow(TreedexWindow): 
   """ Motherclass for all windows of plots. Every subclass must define:
 Class attributes:
   -available_plot_items    list of PlotItem subclasses that be added with self.add_plot_item
@@ -33,18 +42,24 @@ Methods:
   available_plot_items=[]
   dimensions=None
   #default_plot_options={'auto_axis_labels':True}
-  def __init__(self, master_link): 
-    self.container=master_link
-    super(PlotWindow, self).__init__()
+  def __init__(self, dco_link): 
+    self.dco_link=dco_link   
+    c=self.dco_link
+    while not c.container is None: c=c.container
+    self.master_link=c
+    #self.container=master_link
+
+    TreedexWindow.__init__(self)
     self.plot_items=[]
     self.active_menu=[]     ## plot_item, category, menu, button
     self.axis_labels=[]
     #self.plot_options=deepcopy(self.default_plot_options)
-
-  def master(self): return self.container
+ 
+  def master(self): return self.master_link
   def window_identifier(self): return {'category': self.__class__.__name__}
-
-  def add_plot_item(self, piclass, options=None):
+  def delete_data_channels(self):
+     for pi in self.plot_items:       pi.delete_item() #this will flush all DCs
+  def add_plot_item(self, piclass, options=None, cache_name='PlotInput'):
     """ Init a plotitem class with options and add it to the plot_object of this window. 
        No need to reimplement this for window subclasses. The majority of the job is done actually in the __init__ of the plotitems"""
     if options is None: options={}
@@ -54,7 +69,7 @@ Methods:
       index=len([1 for pi in self.plot_items if pi.plot_type==piclass.plot_type])+1
       name='{}.{}'.format(piclass.plot_type, index)
       options['name']=name
-    pi=piclass(self.plot_object, options=options)
+    pi=piclass(self.plot_object, cache_name=cache_name, options=options)
     self.plot_items.append(pi)
     tb=pi.toolbar_class(pi)
     tb.setAutoFillBackground(True)
@@ -81,7 +96,7 @@ Methods:
     self.active_menu=[]
 
   def update_axis(self):
-    print 'updating axissssss'
+    print 'updating axis'
     self.axis_labels=[]
     for dim in range(self.dimensions):
       # coord_name=coordinate_names[dim]
@@ -145,53 +160,48 @@ class PlotItem(object):
   plot_type=None 
   toolbar_class=None
   ## key:  value         or   key:  {subkey: subvalue, subkey2: subvalue2}
-  def __init__(self, plot_object, options):
+  def __init__(self, plot_object, cache_name, options):
     self.plot_object=plot_object
     self.options=deepcopy(self.defaults)  #this stores the current options of the plot
     # copying from dict 
     self.store_options(options, self.options) #updating self.options
-    self.init_data_channel()
+    self.init_data_channel(cache_name) #this will create a self.dc
     self.options_drawn={}              #this stores the options used when the graphics were constructed
     self.init_item()
     self.store_plot_options()
 
-  def init_data_channel(self): pass
-
-  def store_headers(self, df, n):    
-    """ Keeps the column names of of the NumericFeatureSelector when plotted. Useful to store for axis labels"""
+  def store_headers(self, n):    
+    """ Keeps the column names of plot_item.dc when plotted. Function connected to be run when necessary. Useful to store for axis labels"""
+    df=self.dc.out()
     self.headers=[str(df.columns[i])  if not df is None else ''    for i in range(n)]
 
   def copy_options(self):
     out={}
-    self.store_options(self.options, out, dc_as_keys=True, copy=True)
+    self.store_options(self.options, out, copy=True)  #dc_as_keys=True, 
     return out
     
-  def store_options(self, options, target, dc_as_keys=False, copy=False):
+  def store_options(self, options, target, copy=False): #dc_as_keys=False, 
     #self.stored_options={}
     for k in options:
       v=options[k]   
-      if dc_as_keys and isinstance(v, DataChannel): v=v.key(non_redundant=True) 
+      #if dc_as_keys and isinstance(v, DataChannel): v=v.key(non_redundant=True) 
       if isinstance(v, dict):
         for subk in v.keys():
           subv=v[subk]      
-          if dc_as_keys and isinstance(subv, DataChannel): subv=subv.key(non_redundant=True)
+          #if dc_as_keys and isinstance(subv, DataChannel): subv=subv.key(non_redundant=True)
           if copy:        subv=deepcopy(subv)
           if not k in target: target[k]={}
           target[k][subk]= subv
       else:
         if copy:        v=deepcopy(v)
         target[k]=v
-  def store_plot_options(self): self.store_options(self.options, self.options_drawn, dc_as_keys=True, copy=True)   
+  def store_plot_options(self): self.store_options(self.options, self.options_drawn, copy=True)   #dc_as_keys=True, 
 
   def delta_options(self):
     """ Return a set of the primary keys for which their corresponding values changed between self.options_drawn and self.options """
     def different_values(a, b):
-      if isinstance(a, DataChannel):  
-        if a.has_antennas(): return True
-        a=a.key(non_redundant=True)
-      if isinstance(b, DataChannel):  
-        if b.has_antennas(): return True
-        b=b.key(non_redundant=True)        
+      #if isinstance(a, DataChannel):          a=a.key(non_redundant=True)
+      #if isinstance(b, DataChannel):          b=b.key(non_redundant=True)        
       return a!=b
     out=set()
     for k in self.options:
@@ -217,8 +227,9 @@ class PlotItem(object):
           self.options[k][subk]= subv
       else:                         self.options[k]=v
 
-  def init_item(self):   """Start up the plotItem; implemented in subclasses""";     raise Exception
-  def update_item(self): """Update the whole plotItem; implemented in subclasses"""; raise Exception   
+  def init_data_channel(self, cache_name): """Create self.dc based on cache_name """; raise Exception
+  def init_item(self):                     """Start up the plotItem; implemented in subclasses""";     raise Exception
+  def update_item(self):                   """Update the whole plotItem; implemented in subclasses"""; raise Exception   
 
   # def make_toolbar(self):    #raise Exception, "ERROR make_toolbar should be defined in subclasses"
   #   tb=self.toolbar_class(self)
@@ -229,10 +240,9 @@ class PlotItem(object):
 class PlotObject(object):
   """Canvas for PlotItem. Every PlotWindow has a single PlotObject, which can contain several PlotItem instances.
   This is initialized in the init of the PlotWindow of every specific plot class. """
-  #default_options= { 'click_action':'Highlight', 'show_highlight':True, 'show_select':False } 
-  def __init__(self, options={}):    pass
-    #self.options=dict(self.default_options);  self.options.update(options)  #plot options
-  def master(self): return self.plot_window.master()
+  default_options= {} 
+  def __init__(self):  self.options=dict(self.default_options)
+  def master(self):    return self.plot_window.master()
   # def get_window_options(self): 
   #   return self.plot_window.get_options()
   # def get_options(self):
@@ -249,6 +259,9 @@ class ToolbarMenu(QtGui.QWidget):
   def __init__(self, plot_item):
     super(ToolbarMenu, self).__init__()
     self.plot_item=plot_item
+    self.setSizePolicy(  QtGui.QSizePolicy(QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Fixed) )
+    
+
 
 class ToolbarDataMenu(ToolbarMenu):
   """ """
@@ -256,25 +269,13 @@ class ToolbarDataMenu(ToolbarMenu):
     super(ToolbarDataMenu, self).__init__(plot_item=plot_item)
     self.layout=QtGui.QVBoxLayout()
     self.setLayout(self.layout)
-    dc=self.plot_item.options['dc']
+    dc=self.plot_item.dc
     dcw=DataChannelWidget(dc, within='Plot')
     dc_layout=QtGui.QHBoxLayout()
-    dc_layout.addWidget(QtGui.QLabel('Plot Data:'))
+    dc_layout.addWidget(QtGui.QLabel('Data:'))
     dc_layout.addWidget(dcw)
     dc_layout.addStretch()
-    self.layout.addLayout(dc_layout)
- 
-    # for coord_index in range(self.plot_item.plot_object.plot_window.dimensions):
-    #   coord=coordinate_names[coord_index]
-    #   coord_layout=QtGui.QHBoxLayout();  coord_layout.addSpacing(30)
-    #   coord_layout.addWidget(QtGui.QLabel('{} coordinate:'.format(coord)))
-    #   coord_dc=self.plot_item.options[coord]
-    #   coord_dcw=DataChannelWidget(coord_dc, within='Plot')
-    #   coord_layout.addWidget(coord_dcw)
-    #   coord_layout.addStretch()
-    #   self.layout.addLayout(coord_layout)
-  ## no need for active feedback since: the DCs are already connected to self.plot_item.update_item
-
+    self.layout.addLayout(dc_layout)  
 
 class ToolbarPlotitemMenu(ToolbarMenu):
   """ """
@@ -282,6 +283,8 @@ class ToolbarPlotitemMenu(ToolbarMenu):
     super(ToolbarPlotitemMenu, self).__init__(plot_item=plot_item)
     self.layout=QtGui.QVBoxLayout()
     self.setLayout(self.layout)
+    sizePolicy = QtGui.QSizePolicy(QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Fixed)
+    self.setSizePolicy(sizePolicy)
     row1=QtGui.QHBoxLayout()
     row1.addWidget(QtGui.QLabel('Type:'))
     row1.addWidget(QtGui.QLabel(self.plot_item.plot_type))
@@ -290,6 +293,7 @@ class ToolbarPlotitemMenu(ToolbarMenu):
     current_name=self.plot_item.options['name']
     self.name_textbox=QtGui.QLineEdit()
     self.name_textbox.setText(current_name)
+    self.name_textbox.setSizePolicy(fixed_size_policy)
     self.name_textbox.editingFinished.connect(self.edited_plot_item_name)
     row1.addWidget(self.name_textbox)
     row1.addWidget(VerticalLine('lightgrey'))
@@ -344,6 +348,8 @@ class PlotItemToolbar(QtGui.QWidget):
   plotitem_menu=ToolbarPlotitemMenu
   data_menu=ToolbarDataMenu
   view_menu=None   #must be defined in subclasses
+  ancestors_menu=None
+  interactivity_menu=None
 
   def __init__(self, plot_item): 
     super(PlotItemToolbar, self).__init__() #    QtGui.QWidget.__init__(self)  
@@ -373,10 +379,11 @@ class PlotItemToolbar(QtGui.QWidget):
     self.layout.addWidget(self.data_button)
     self.view_button=ToolbarToolButton('view', 'View', self.view_button_was_clicked)
     self.layout.addWidget(self.view_button)
-    # self.ancestors_button=TreedexToolButton('ancestors.icon.png', 'Ancestors', self.ancestors_button_was_clicked)
-    # self.layout.addWidget(self.ancestors_button)
-
-    # self.layout.addWidget(VerticalLine())
+    self.ancestors_button=ToolbarToolButton('ancestors', 'Ancestors', self.ancestors_button_was_clicked)
+    self.layout.addWidget(self.ancestors_button)
+    self.layout.addWidget(VerticalLine())
+    self.interactivity_button=ToolbarToolButton('interactivity', 'Interactivity', self.interactivity_button_was_clicked)
+    self.layout.addWidget(self.interactivity_button)
 
     # self.tables_button=TreedexToolButton('tables.icon.png', 'Tables', self.tables_button_was_clicked)
     # self.layout.addWidget(self.tables_button)
@@ -411,10 +418,11 @@ class PlotItemToolbar(QtGui.QWidget):
     button.setStyleSheet(button.stylesheet_active)
     win.active_menu=[self.plot_item, key, menu, button]
 
-  def plotitem_button_was_clicked(self):       self.button_was_clicked('plotitem',  self.plotitem_menu,   self.plotitem_button)
+  def plotitem_button_was_clicked(self):       self.button_was_clicked('plotitem',  self.plotitem_menu,  self.plotitem_button)
   def data_button_was_clicked(self):           self.button_was_clicked('data',      self.data_menu,      self.data_button)
   def view_button_was_clicked(self):           self.button_was_clicked('view',      self.view_menu,      self.view_button)
-  # def ancestors_button_was_clicked(self):      self.button_was_clicked('ancestors', PlotItemAncestorsMenu, self.ancestors_button)
+  def ancestors_button_was_clicked(self):      self.button_was_clicked('ancestors', self.ancestors_menu, self.ancestors_button)
+  def interactivity_button_was_clicked(self):  self.button_was_clicked('interactivity',  self.interactivity_menu,  self.interactivity_button)
     #self.button_was_clicked('plotitem',  PlotItemPlotMenu,      self.plotitem_button)
   # def tables_button_was_clicked(self):         self.button_was_clicked('tables',    PlotItemTablesMenu,    self.tables_button)
   # def stats_button_was_clicked(self):          self.button_was_clicked('stats',     PlotItemStatsMenu,     self.stats_button)

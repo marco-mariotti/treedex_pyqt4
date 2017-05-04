@@ -1,6 +1,7 @@
 import os
 from PyQt4   import QtCore, QtGui
 from ..common import *
+import pyqtgraph as pg
 
 fixed_size_policy = QtGui.QSizePolicy(QtGui.QSizePolicy.Fixed, QtGui.QSizePolicy.Fixed)
 
@@ -12,18 +13,21 @@ def clear_layout(layout, widget=None, index=None):
     widget.setVisible(False)
     widget.setParent(None)
   else:
-    indices=reversed(range(layout.count())) if index is None else [index]
-    items=[layout.itemAt(i)  for i in indices]
-    for i in items:
-      w=i.widget()
-      if w is None:        
-        if i.layout(): clear_layout(i.layout())    ### recursively removing layouts
-        layout.removeItem(i)
-      else:                
-        layout.removeWidget(w)
-        w.setVisible(False)
-        w.setParent(None)
-      #w.deleteLater()    # this would cause the crash
+    try: 
+      indices=reversed(range(layout.count())) if index is None else [index]
+      items=[layout.itemAt(i)  for i in indices]
+      for i in items:
+        w=i.widget()
+        if w is None:        
+          if i.layout(): clear_layout(i.layout())    ### recursively removing layouts
+          layout.removeItem(i)
+        else:                
+          layout.removeWidget(w)
+          #w.setVisible(False)
+          w.setParent(None)
+          w.deleteLater()    # this would cause the crash
+    except RuntimeError:
+      print 'runtime error blablab'
 
 def icons_folder():  return os.path.dirname(os.path.abspath(__file__))+'/../icons/'
 
@@ -34,19 +38,32 @@ def get_icon(label):
   if not label in stored_icons: stored_icons[label]=QtGui.QIcon(filename)
   return stored_icons[label]
 
+stored_pixmap={}
+def get_pixmap(label):
+  filename='{path}{tag}.png'.format(path=icons_folder(), tag=label)
+  if not os.path.isfile(filename): printerr('WARNING pixmap not found: {f}'.format(f=filename), 1)
+  if not label in stored_pixmap: stored_pixmap[label]=QtGui.QPixmap(filename)
+  return stored_pixmap[label]
+
 ####################################################################################
 class TreedexWindow(QtGui.QWidget):
   def __init__(self):
     super(TreedexWindow, self).__init__() 
     self.master().windows().add_window( self, **(self.window_identifier()) )    
     # now self.window_name is available
-    
+
+  def delete_data_channels(self): return
   def window_identifier(self):
     """ must return either {'window_name': something}   or {'category':something} """
     raise Exception, "ERROR TreedexWindow window_identifier must be defined in subclasses!"
 
   def closeEvent(self, e):
     write('catch: window closed {n}'.format(n=self.window_name), 1)
+    if hasattr(self, 'dco_link') and not self.dco_link is None: # if is None, the closeEvent was actually triggered from the dco being deleted.
+      print 'plot window closed! removing linked DCO'
+      self.dco_link.window_link=None    #avoiding second activation
+      self.dco_link.container.pop(    self.dco_link.container.chain.index(self.dco_link)     ) 
+    self.delete_data_channels()
     self.master().windows().remove_window(self)
     QtGui.QWidget.closeEvent(self, e)
 

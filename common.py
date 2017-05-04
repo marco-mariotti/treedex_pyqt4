@@ -5,9 +5,51 @@ printed_rchar=0
 from string import lowercase, uppercase, digits #, lower, upper
 import sys
 from copy import deepcopy
+from  colorsys import hsv_to_rgb, rgb_to_hsv
+import pandas as pd
+from hashlib import md5
+
+import os
+def mute(also_stderr=False):
+  """ Turns off any output to stdout (to stderr as well if option is True). To go back to normal , use unmute()"""
+  sys.stdout = open(os.devnull, "w")
+  if also_stderr:   sys.stderr = open(os.devnull, "w")
+
+def unmute():
+  sys.stdout = sys.__stdout__;  sys.stderr = sys.__stderr__
+
+
+def md5_of_dataframe(df):
+  m = md5()
+  if isinstance(df, pd.Series):   m.update( df.to_msgpack() )
+  else: 
+    for row_i in df.index:        m.update(  df.loc[row_i].to_msgpack()    )
+  return m.digest()
 
 class NodeSelector(set):
   """ """
+  def walk_tree(self, up=False, down=False, only_ancestors=False, only_leaves=False, maxup=None, maxdown=None):
+    """Return a NodeSelector with all nodes that you would encounter going up to the root and/or down to leaves  (depending on arguments up and down) starting from any of the nodes in this self NodeSelector."""
+    out=NodeSelector()
+    for n in self:
+      if down:
+        for level, d in n.traverse_by_level(exclude_fn=lambda x:x in out):
+          #print d
+          if level==0: continue
+          #if d in out: exclude.add(d); continue
+          out.add(d)
+          if not maxdown is None and level==maxdown:   break          
+      if not n in out and (not only_ancestors or not n.is_leaf()): out.add(n) 
+      if up:
+        u=n;  upindex=0
+        while u.up and not u.up in out: 
+          out.add(u.up)        
+          u=u.up
+          upindex+=1
+          if not maxup is None and upindex==maxup:     break
+
+    if only_leaves: out= NodeSelector([n for n in out if n.is_leaf()])
+    return out
 
 def rescale(x, ymin, ymax, xmin=0.0, xmax=1.0):  
   """Generic function to compute proportions; it rescales proportionally an 
