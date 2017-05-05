@@ -92,6 +92,7 @@ class ToolButton(QtGui.QToolButton):
     self.setDefaultAction(action)
     if not fn is None:        self.clicked.connect(fn)
     if self.stylesheet: self.setStyleSheet(self.stylesheet)
+    self.setIconSize(QtCore.QSize(20,20))
 
 class ChainButton(QtGui.QPushButton):
   def __init__(self, fn=None):

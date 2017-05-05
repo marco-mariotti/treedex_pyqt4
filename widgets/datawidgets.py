@@ -721,7 +721,67 @@ class DCOW_select(DCOW):
     self.layout.addWidget(self.checkbox)
     self.layout.addWidget(self.invert_checkbox)
 
+    self.select_by_index_button=QtGui.QPushButton('Select by index...')
+    self.select_by_index_button.clicked.connect(self.clicked_select_by_index_button)
+    self.layout.addWidget(self.select_by_index_button)
+
+    self.label_index1=QtGui.QLabel('Select columns in the')
+    self.layout.addWidget(self.label_index1)
+    row=QtGui.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(0)
+    self.label_index2=QtGui.QLabel('index of ')
+    row.addWidget(self.label_index2)
+    self.select_by_index_checkbox=QtGui.QComboBox()
+    row.addWidget(self.select_by_index_checkbox)
+    row.addStretch()
+    self.layout.addLayout(row)
+
+    # fill combobox
+    available_cache_names=set()
+    container=self.dco.container
+    while not container is None:
+      available_cache_names.update( container.caches )
+      container=container.container
+    self.available_cache_names=sorted(available_cache_names) #['None']+
+    for i, cache_name in enumerate(self.available_cache_names):       self.select_by_index_checkbox.addItem(cache_name)      
+
+    row1=QtGui.QHBoxLayout(); row1.setContentsMargins(0,0,0,0); row1.setSpacing(0)
+    self.tolerate_checkbox=QtGui.QCheckBox()
+    self.tolerate_checkbox.setText('Tolerate missing columns')
+    row1.addWidget(self.tolerate_checkbox)
+    row1.addStretch()
+    self.layout.addLayout(row1)
+
+    self.select_by_index_cancel_btn=QtGui.QPushButton('Cancel')
+    self.select_by_index_cancel_btn.clicked.connect(self.clicked_select_by_index_cancel_btn)
+    self.select_by_index_add_btn=QtGui.QPushButton('Add this')
+    if not self.available_cache_names: self.select_by_index_add_btn.setEnabled(False)
+    self.select_by_index_add_btn.clicked.connect(self.clicked_select_by_index_add_btn)
+    row2=QtGui.QHBoxLayout(); row2.setContentsMargins(0,0,0,0); row2.setSpacing(0)
+    row2.addWidget(self.select_by_index_cancel_btn)
+    row2.addWidget(self.select_by_index_add_btn)
+    row2.addStretch()
+    self.layout.addLayout(row2)
+
+    for w in [self.label_index1, self.label_index2, self.select_by_index_checkbox, self.tolerate_checkbox, self.select_by_index_cancel_btn, self.select_by_index_add_btn]:      w.setVisible(False)  
     self.textbox.setText(text)
+
+  def clicked_select_by_index_button(self):
+    for w in [self.label_index1, self.label_index2, self.select_by_index_checkbox, self.tolerate_checkbox, self.select_by_index_cancel_btn, self.select_by_index_add_btn]:      w.setVisible(True)    
+    self.select_by_index_button.setVisible(False)
+
+  def clicked_select_by_index_add_btn(self):
+    self.clicked_select_by_index_cancel_btn()
+    txt=str(self.textbox.text())
+    if txt: txt+=','
+    cache_name=self.available_cache_names[ self.select_by_index_checkbox.currentIndex() ]    
+    if self.tolerate_checkbox.isChecked(): cache_name='&'+cache_name
+    txt+='^'+cache_name
+    self.textbox.setText( txt  )
+
+  def clicked_select_by_index_cancel_btn(self):
+     for w in [self.label_index1, self.label_index2, self.select_by_index_checkbox, self.tolerate_checkbox, self.select_by_index_cancel_btn, self.select_by_index_add_btn]:      w.setVisible(False) 
+     self.select_by_index_button.setVisible(True)
+
 
   def save(self):
     new_text=str(self.textbox.text()).strip().strip(',').strip()
@@ -746,7 +806,81 @@ class DCOW_simple_text_input(DCOW):
     if not new_text: new_text=None
     self.update_dco(new_text)
 
-class DCOW_filter(DCOW_simple_text_input):   """ """
+class DCOW_filter(DCOW):
+  """ """
+  def __init__(self, dcw, dco):
+    super(DCOW_filter, self).__init__(dcw, dco) #    QtGui.QWidget.__init__(self)  
+    self.layout=QtGui.QVBoxLayout(); self.layout.setContentsMargins(0,0,0,0); self.layout.setSpacing(0)
+    self.setLayout(self.layout)
+    self.textbox= QtGui.QLineEdit()
+    self.filter_by_set_button=QtGui.QPushButton('Filter by index...')
+    self.filter_by_set_button.clicked.connect(self.clicked_filter_by_set_button)
+    self.query_filter_button=QtGui.QPushButton('Filter with a query...')
+    self.query_filter_button.clicked.connect(self.clicked_query_filter_button)
+    self.layout.addWidget(self.textbox)
+    self.layout.addWidget(self.filter_by_set_button)
+    self.layout.addWidget(self.query_filter_button)
+
+    row=QtGui.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(0)
+    self.label1=QtGui.QLabel('Value of')
+    row.addWidget(self.label1)
+    self.value_textbox=QtGui.QLineEdit()
+    row.addWidget(self.value_textbox)
+    row.addStretch()
+    self.layout.addLayout(row)
+
+    row2=QtGui.QHBoxLayout(); row2.setContentsMargins(0,0,0,0); row2.setSpacing(0)
+    self.label2=QtGui.QLabel('is in index of')
+    row2.addWidget(self.label2)
+    self.cache_combobox=QtGui.QComboBox()
+    row2.addWidget(self.cache_combobox)
+    row2.addStretch()
+    self.layout.addLayout(row2)
+
+    current_cache=None
+    if self.dco.parameters is None or not self.dco.parameters.startswith('^'):
+      for w in [self.cache_combobox, self.label1, self.label2, self.value_textbox, self.query_filter_button]: w.setVisible(False)
+      #for w in [self.textbox, self.filter_by_set_button]: w.setVisible(True)
+      if not self.dco.parameters is None:      self.textbox.setText(self.dco.parameters)
+
+    else:
+      #for w in [self.cache_combobox, self.label1, self.label2, self.value_textbox, self.query_filter_button]: w.setVisible(True)
+      for w in [self.textbox, self.filter_by_set_button]: w.setVisible(False)
+      field, current_cache=self.dco.parameters[1:].split('@')
+      self.value_textbox.setText(field)
+
+    # fill combobox
+    available_cache_names=set()
+    container=self.dco.container
+    while not container is None:
+      available_cache_names.update( container.caches )
+      container=container.container
+    self.available_cache_names=sorted(available_cache_names) #['None']+
+    for i, cache_name in enumerate(self.available_cache_names):       
+      self.cache_combobox.addItem(cache_name)      
+      if current_cache==cache_name: self.cache_combobox.setCurrentIndex(i)
+
+
+  def clicked_filter_by_set_button(self):
+    for w in [self.cache_combobox, self.label1, self.label2, self.value_textbox, self.query_filter_button]: w.setVisible(True)
+    for w in [self.textbox, self.filter_by_set_button]: w.setVisible(False)
+
+  def clicked_query_filter_button(self):
+    for w in [self.cache_combobox, self.label1, self.label2, self.value_textbox, self.query_filter_button]: w.setVisible(False)
+    for w in [self.textbox, self.filter_by_set_button]: w.setVisible(True)
+
+  def save(self):
+    if self.cache_combobox.isVisible():
+      if not self.available_cache_names:     new_text=None
+      else: 
+        new_text='^{}@{}'.format( str(self.value_textbox.text()).strip(), self.available_cache_names[self.cache_combobox.currentIndex()]      )
+    else:
+      new_text= str(self.textbox.text()).strip()
+      if not new_text: new_text=None
+    self.update_dco(new_text)
+
+
+
 class DCOW_process(DCOW_simple_text_input):  """ """
 class DCOW_compute(DCOW_simple_text_input):  """ """
 
@@ -803,11 +937,52 @@ class DCOW_rename(DCOW):
     self.setLayout(self.layout)
     self.pairs=[]  # list of tuples of len 2; each object is a textbox
     input_text=self.dco.parameters or '='
-    add_button=ToolButton('plus', 'Add a renaming item', lambda s:self.add_pair())
-    self.layout.addWidget(add_button)
+
+    last_row=QtGui.QHBoxLayout(); last_row.setContentsMargins(0,0,0,0); last_row.setSpacing(0)
+    add_button=ToolButton('plus', 'Add pair', lambda x:self.add_pair())
+    add_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+    last_row.addWidget(add_button)
+    last_row.addStretch()
+    add_special_button=ToolButton('plus', 'Rename by index', lambda x:self.add_special_pair())
+    add_special_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+    last_row.addWidget(add_special_button)
+    last_row.addStretch()
+    self.layout.addLayout(last_row)
+    
+    # for caches
+    available_cache_names=set()
+    container=self.dco.container
+    while not container is None:
+      available_cache_names.update( container.caches )
+      container=container.container
+    self.available_cache_names=sorted(available_cache_names)
+
     for row_index, pair in enumerate(input_text.split(',')):
-      newK,oldK= pair.split('=')
-      self.add_pair(newK,oldK)
+      if pair.startswith('^'):
+        cache_name, field=pair[1:].split('@')
+        self.add_special_pair(cache_name, field)
+      else:
+        newK,oldK= pair.split('=')
+        self.add_pair(newK,oldK)
+
+  def add_special_pair(self, cname=None, field=''):
+    row_layout=QtGui.QHBoxLayout(); row_layout.setContentsMargins(0,0,0,0); row_layout.setSpacing(0)
+    row_layout.addWidget(QtGui.QLabel('index of'))
+    cache_combobox=QtGui.QComboBox()
+    for i, cache_name in enumerate(self.available_cache_names): 
+      cache_combobox.addItem(cache_name)      
+      if not cname is None and cache_name==cname: cache_combobox.setCurrentIndex(i)
+    row_layout.addWidget(cache_combobox)
+    row_layout.addWidget(QtGui.QLabel(' to field'))
+    textbox=QtGui.QLineEdit(field)
+    row_layout.addWidget(textbox)
+    row_layout.addStretch()
+    self.pairs.append( [cache_combobox, textbox] )
+    if len(self.pairs)>1: #adding a button to remove a pair
+      remove_button=ToolButton('remove', 'Remove this renaming item', lambda s,index=len(self.pairs)-1:self.remove_pair(index=index) )
+      row_layout.addWidget(remove_button)
+    self.layout.insertLayout( self.layout.count()-1, row_layout )
+
 
   def add_pair(self, newK='', oldK=''):
     #print 'add pair', oldK, newK, len(self.pairs)
@@ -816,6 +991,7 @@ class DCOW_rename(DCOW):
     label=QtGui.QLabel(' to ')
     textbox2=QtGui.QLineEdit(newK, self)
     row_layout.addWidget(textbox1);     row_layout.addWidget(label);     row_layout.addWidget(textbox2)
+    row_layout.addStretch()
     self.pairs.append( [textbox1, textbox2] )
     if len(self.pairs)>1: #adding a button to remove a pair
       remove_button=ToolButton('remove', 'Remove this renaming item', lambda s,index=len(self.pairs)-1:self.remove_pair(index=index) )
@@ -828,14 +1004,23 @@ class DCOW_rename(DCOW):
 
   def save(self):
     tot_text=''
-    for textbox1, textbox2 in self.pairs: 
-      oldK= str(textbox1.text()).strip()
-      newK= str(textbox2.text()).strip()
-      if not oldK and not newK : continue
-      if not oldK or not newK : raise Exception, "ERROR renaming fields cannot be left empty!"
-      if not check_forbidden_characters(oldK) or not check_forbidden_characters(newK): 
+    for a, b in self.pairs: 
+      if isinstance(a, QtGui.QComboBox): #cache
+        cache_combobox, textbox=a, b
+        if not self.available_cache_names: continue
+        cache_name=self.available_cache_names[cache_combobox.currentIndex()]
+        field= str(textbox.text()).strip()
+        tot_text+= '^'+cache_name+'@'+field+','
+      else:
+        textbox1, textbox2=a, b
+        oldK= str(textbox1.text()).strip()
+        newK= str(textbox2.text()).strip()
+        if not oldK and not newK : continue
+        if not oldK or not newK : raise Exception, "ERROR renaming fields cannot be left empty!"
+        if not check_forbidden_characters(oldK) or not check_forbidden_characters(newK): 
           raise Exception, "ERROR one or more forbidden character detected in renaming fields!"
-      tot_text+=newK+'='+oldK+','
+        tot_text+=newK+'='+oldK+','
+
     final=tot_text[:-1] if tot_text else None
     self.update_dco(final)
 
@@ -863,6 +1048,43 @@ class DCOW_var(DCOW):
   def save(self):
     new_text=  '{}={}'.format(  str(self.textbox1.text()).strip(),   str(self.textbox2.text()).strip()  )
     if len(new_text)==1: new_text=None
+    self.update_dco(new_text)
+
+class DCOW_index(DCOW):
+  """ """
+  def __init__(self, dcw, dco):
+    super(DCOW_index, self).__init__(dcw, dco) #    QtGui.QWidget.__init__(self)  
+    self.layout=QtGui.QVBoxLayout(); self.layout.setContentsMargins(0,0,0,0); self.layout.setSpacing(0)
+    self.setLayout(self.layout)
+    row=QtGui.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(0)
+    label=QtGui.QLabel('Set index on:')
+    row.addWidget(label)
+    self.textbox=QtGui.QLineEdit()
+    row.addWidget(self.textbox)
+    self.layout.addLayout(row)
+
+    row2=QtGui.QHBoxLayout(); row2.setContentsMargins(0,0,0,0); row2.setSpacing(0)
+    label=QtGui.QLabel('or: ')
+    row2.addWidget(label)
+    self.reset_checkbox=QtGui.QCheckBox()
+    self.reset_checkbox.setText('reset index')
+    row2.addWidget(self.reset_checkbox)
+    row2.addStretch()
+    self.layout.addLayout(row2)
+    
+    if not self.dco.parameters is None:
+      if self.dco.parameters=='@': 
+        self.reset_checkbox.setChecked(True)
+        self.textbox.setEnabled(False)
+      else:
+        self.textbox.setText(  self.dco.parameters  )
+    self.reset_checkbox.stateChanged.connect(self.checked_reset_checkbox)
+
+  def checked_reset_checkbox(self, state):    self.textbox.setEnabled( not state  )
+  def save(self):
+    if    self.reset_checkbox.isChecked(): new_text=  '@'
+    else:  new_text=  str(self.textbox.text()).strip()
+    if not new_text:       new_text=None
     self.update_dco(new_text)
 
 class DCOW_aggregate(DCOW):
@@ -1749,7 +1971,7 @@ class DCOW_send_to_plot(DCOW):
 
 DCO_categories=[ ['Start', ['database', 'antenna', 'generator']],\
                  ['Row operations', ['filter', 'append', 'aggregate', 'transform', 'nodeFilter']],\
-                 ['Column operations', ['select', 'rename', 'process', 'compute', 'join', 'add_column', 'log', 'scale' ]],\
+                 ['Column operations', ['select', 'rename', 'process', 'compute', 'join', 'add_column', 'index', 'log', 'scale' ]],\
                  ['Colors', ['color']],\
                  ['Tree', ['trace', 'treeInfo', 'pgls']],\
                  ['DC management', ['cache', 'retrieve','call', 'var']],\
@@ -1764,6 +1986,7 @@ DCO_descriptions={'database':   'Start with a dataframe table from a file',
                   'append':     'Stack rows to an existing dataframe',
                   'add_column': 'Add a column to an existing dataframe',
                   'aggregate':  'Group and merge rows (e.g. by averaging)',
+                  'index':      'Set a column as the index for the dataframe ',
                   'transform':  'Rank rows or fit them to a distribution',
                   'log':        'Apply a logarithmic function on columns',
                   'scale':      'Rescale one or more columns',
@@ -1792,7 +2015,7 @@ DCO_name2widget={'database':DCOW_database, 'antenna':DCOW_antenna, 'generator':D
                  'table':DCOW_table,  'scatterplot':DCOW_scatterplot, 'plot3D':DCOW_plot3D,  'send_to_plot':DCOW_send_to_plot,
                  'color':DCOW_color,
                  'log':DCOW_log,   'scale':DCOW_scale, 
-                 'pgls':DCOW_pgls}
+                 'pgls':DCOW_pgls, 'index':DCOW_index}
 
 
 class ExtendDataChannelWidget(QtGui.QWidget):
@@ -1960,8 +2183,11 @@ class FeatureLoader(TreedexWindow):
 
     ### Species determination
     speciesidlayout=QtGui.QHBoxLayout()
-    label=QtGui.QLabel('Species is indicated in the ')
-    speciesidlayout.addWidget(label)
+    self.species_checkbox=QtGui.QCheckBox()
+    self.species_checkbox.setChecked(True)    
+    speciesidlayout.addWidget(self.species_checkbox)
+
+    self.species_checkbox.setText('Species is indicated in the ')
     self.speciesid_rc_combobox=QtGui.QComboBox()
     self.speciesid_rc_combobox.possible_values=[('c', 'column'), ('r', 'row')]
     for _,txt in self.speciesid_rc_combobox.possible_values: self.speciesid_rc_combobox.addItem(txt)
@@ -2066,12 +2292,14 @@ class FeatureLoader(TreedexWindow):
       with_value=   str(self.speciesid_v_textbox.text())
 
       index_col={True:0, False:False}[self.useindex_checkbox.isChecked()]
-      pd_df=pd.read_csv(filename, sep=field_separator, index_col=index_col) #pandas dataframe
-      if  row_or_col=='r':      pd_df=pd_df.T
-      if    index_or_name=='i':      node_field=str(pd_df.columns[  int(with_value)-1  ])
+      df=pd.read_csv(filename, sep=field_separator, index_col=index_col) #pandas dataframe
+      if  row_or_col=='r':      df=df.T
+      if    index_or_name=='i':      node_field=str(df.columns[  int(with_value)-1  ])
       elif  index_or_name=='n':      node_field=with_value
       #if    index_or_name=='i':      node_field=str(pd_df.columns[  int(with_value)-1  ])
       #elif  index_or_name=='n':      node_field=with_value    
+
+      if not self.species_checkbox.isChecked(): node_field=None
   
       df_name=str(self.name_box.text()).strip()
       if not df_name: raise Exception, "ERROR cannot save a database with no name"
@@ -2502,7 +2730,7 @@ class TreedexFeatureExplorer(TreedexWindow):
         self.auto_select_cells_dc=self.dc.copy()
         self.auto_select_cells_dc.muted=True
         self.auto_select_cells_dc.append(DCO_select('Node')) 
-        self.auto_select_cells_dc.append(DCO_index('reset')) 
+        self.auto_select_cells_dc.append(DCO_index('@')) 
         self.auto_select_cells_dc.append(DCO_nodeFilter(selname)) 
         self.auto_select_cells_dc.muted=False
         self.auto_select_cells_dc.signal_value_changed.connect(self.update_auto_selected_cells)

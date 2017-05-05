@@ -868,13 +868,15 @@ typecheck:$xfield,$yfield,$zfield=n{sep}select:$xfield,$yfield,$zfield,Node{d}]'
         self.marking_dc.muted=True
         #self.marking_dc.append(DCO_nodeFilter(selname))      
         self.marking_dc.append(DCO_select('Node,color'))      
-        self.marking_dc.append(DCO_nodeFilter('All leaves'))      
+        self.marking_dc.append(DCO_nodeFilter('All leaves'))    
+        self.marking_dc.append(DCO_add_column('in_input=!1'))           
         self.marking_dc.append(DCO_cache('_w'))      
         self.marking_dc.append(DCO_antenna(selname))      
         self.marking_dc.append(DCO_add_column('_mark=!1'))      
         self.marking_dc.append(DCO_cache('_n'))      
         self.marking_dc.append(DCO_retrieve('_w'))      
-        self.marking_dc.append(DCO_join(':_n@outer'))      
+        self.marking_dc.append(DCO_join(':_n@outer'))  
+        self.marking_dc.append(DCO_filter('in_input==True'))    
         self.marking_dc.muted=False
         write( ('update marking DC now is: ', self.marking_dc), 1, how='red,reverse')
         self.update_marking() #options_key)

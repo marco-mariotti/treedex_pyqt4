@@ -201,10 +201,10 @@ class MemoryUnit(object):
             stack.append(pu)
 
 
-  def trigger_recompute_in_downstream_DCs(self):
+  def trigger_recompute_in_downstream_DCs(self, dc_triggered=None):
     """ "Invoked on a Database memory unit when this is overwritten with a different value"""
     if not 'Highlighted' in self.name:   write('Trigger recompute start', 1)
-    dc_triggered=set()
+    if dc_triggered is None:    dc_triggered=set()
     for mu in self.traverse_tree():      
       if not 'Highlighted' in self.name:  write('Trigger traversing: '+mu.name, 1)
       if isinstance(mu, PointerUnit):
@@ -569,6 +569,7 @@ Normally these two signals are connected to self.out;  use auto_update=False to 
     for p in previous_pointers:      p.data_channels.remove(self)
     self.pointers_retrieved=set()    
     self.pointers_to_trigger=set()
+    self.phase=1
 
     cmu=mu         #cmu= last mu with .data stored
     cmu_i=-1       #index of DCO linked to last cmu
@@ -578,7 +579,8 @@ Normally these two signals are connected to self.out;  use auto_update=False to 
       #write('     within first round -> {} {}'.format(first_i, dco), 1)
       #dco.dc_index=first_i
       if   isinstance(dco, ManagementDCO):
-        df, mu=dco.manage_dataframe(df, mu, self)    
+        df, mu=dco.manage_dataframe(df, mu, self)   
+        if df is BreakFlag: break
         ## DCO_cache: if overwriting something, will add to self.pointers_to_trigger    
         ## DCO_retrieve:  every pu added to pointers_retrieved
         if not mu.data is NoData: cmu=mu; cmu_i=first_i
@@ -613,6 +615,7 @@ Normally these two signals are connected to self.out;  use auto_update=False to 
     # elif not restart is None:   
     #   df, mu=restart       #nothing useful in memory tree, and we're running a DCO_group
       #write('cmu_i == -1 and restart is not none. mu= {} df= {}'.format(mu.name, df), 1)
+    self.phase=2
 
     second_i=cmu_i+1
     while second_i<len(run_chain):
@@ -671,6 +674,8 @@ Normally these two signals are connected to self.out;  use auto_update=False to 
             value_changed=False
 
         else: 
+          write('reusing DCO data for k='+str(k)+'', 1, how='red')
+
           next_df=next_mu.data
 
       second_i+=1
@@ -714,7 +719,10 @@ Normally these two signals are connected to self.out;  use auto_update=False to 
           dc.recompute_dc=True
           write(' ->  retrigger out on DC:'+ dc.key(), 1)
           dc.out(dc_triggered) #, recompute_dc=True)    
-    #write('retrigger... done.  {k}'.format(k=self.key()), 1)        
+      for dep in pu.dependants:
+        dep.trigger_recompute_in_downstream_DCs(dc_triggered)
+      #write('retrigger... done.  {k}'.format(k=self.key()), 1)        
+      
 
     if not previous_mu is None:
       previous_mu.trim_memory()
@@ -1108,40 +1116,7 @@ class DCO_add_column(DataChannelOperation):
     else:                         value=float(value)
     return df.assign(**{colname:value})   
 
-#### other DCOs
-class DCO_select(DataChannelOperation):
-  name='select'
-  """Init with: column name to be selected. optionally, multiple col names, comma-separated. 
-  Typically the first one is 'Node';  
-  Position, 1-based indexes can be also queried using '$'  for example Node,$3 
-  The ":" special character means: all other fields not explicitly specified in this select. 
-   This is useful to reorder columns; E.g: you want to bring column A as first:  'select:A,:'
-  If parameters start with '@', selection is inverted: these columns are not selected
-  """
-  def action(self, df):    
-    x=self.interpreted_params(df)
-    if x.startswith('@'):   
-      invfields=set(x[1:].split(','))
-      fields=[f for f in df.columns if not f in invfields]
-    else:
-      fields=x.split(',')   
-      if ':' in fields:
-        explicitly_selected=set([f for f in fields if f!=':'])
-        others=[f for f in df.columns if not f in explicitly_selected]
-        for i in range(len(fields)-1, -1, -1): #parsing positions backwards
-          if fields[i]==':': 
-            fields.pop(i)
-            for f in others: fields.insert(i, f)
-    return df[fields].copy()
 
-  def short(self): return DataChannelOperation.short(self) if self.parameters is None or not self.parameters.startswith('@')      else  '!'+self.parameters[1:]
-
-class DCO_filter(DataChannelOperation):
-  name='filter'
-  """Init with: query string. Examples:     
-      DCO_filter( 'Node.startwith("P")' )  
-      DCO_filter( 'ML > 100' )    """
-  def action(self, df):    return df.query(self.interpreted_params(df))
 
 class DCO_eval(DataChannelOperation):  #just to avoid duplicating the code for process and compute
   engine=None
@@ -1169,24 +1144,17 @@ class DCO_compute(DCO_eval):
   name='compute'
   engine='numexpr'
 
-class DCO_rename(DataChannelOperation):
-  name='rename'
-  """Init with:  new1=old1
-     or with:    new1=old1,new2=old2"""
-  def action(self, df):
-    rename_hash={}
-    for pair in self.interpreted_params(df).split(','):  
-      newK, oldK= pair.split('=')
-      rename_hash[oldK]=newK
-    return df.rename(columns=rename_hash)
-
 class DCO_index(DataChannelOperation):           
   name='index'
   """Manipulate the index of the input DF. 
-  parameters=='reset' to reset the index to numeric, range  """
+  parameters=='@' to reset the index to numeric, range  """
   def action(self, df):
-    if self.interpreted_params(df)=='reset': return df.reset_index()
-    else: raise Exception     
+    p=self.interpreted_params(df)
+    if      p =='@': return df.reset_index()
+    else:   
+      return df.set_index(  p.split(',') )
+
+  def short(self): return DataChannelOperation.short(self) if self.parameters !='@' else 'reset'
 
 class DCO_aggregate(DataChannelOperation):           ### Finish/add transform
   name='aggregate'
@@ -1376,7 +1344,7 @@ class DCO_append(DataChannelOperationWithDependencies):
         p=p.container
       if pu is None: raise Exception, "'append' component: cache requested not found! {}".format(dbname)
       dependency_mu=pu
-      df2=pu.data
+      df2=pu.pointed.data
     else: #db (or antenna)
       prefix='database:'
       if dbname.startswith('^'):
@@ -1393,6 +1361,121 @@ class DCO_append(DataChannelOperationWithDependencies):
       else:   raise Exception, "ERROR append: the two dataframes do not have the same columns!"
     next_df=df.append(df2, ignore_index=True)
     return (next_df, [dependency_mu])
+
+class DCO_select(DataChannelOperationWithDependencies):
+  name='select'
+  """Init with: 
+  -column name to be selected. optionally, multiple col names, comma-separated. 
+   Typically the first one is 'Node';  
+   Position, 1-based indexes can be also queried using '$'  for example Node,$3 
+   The ":" special character means: all other fields not explicitly specified in this select. 
+    This is useful to reorder columns; E.g: you want to bring column A as first:  'select:A,:'  
+  -if parameters start with '@', it's like above, but selection is inverted: these columns are not selected
+  -if any column name starts with "^", this is actually a cache. 
+   Select will get all columns that are present as values in the index of that cache.
+   Missing values are not tolerated unless the starting character is ^&
+  """
+  def action_with_dependencies(self, df):    
+    deps=[]
+    x=self.interpreted_params(df)
+    
+    if x.startswith('@'): x=x[1:]; invert=True
+    else:                          invert=False
+
+    fields=x.split(',')   
+    if ':' in fields:
+      explicitly_selected=set([f for f in fields if f!=':'])
+      others=[f for f in df.columns if not f in explicitly_selected]
+      for i in range(len(fields)-1, -1, -1): #parsing positions backwards
+        if fields[i]==':': 
+          fields.pop(i)
+          for f in others: fields.insert(i, f)
+    for ifield, f in reversed(list(enumerate(fields))):
+      if f.startswith('^'): #this is a cache name
+        var_name=f[1:]
+        if var_name.startswith('&'): missing_tolerated=True; var_name=var_name[1:]
+        else:                        missing_tolerated=False
+        pu=None  #flag
+        p=self.container
+        while not p is None:
+          if p.has_cache(var_name): pu=p.retrieve_cache(var_name); break     
+          p=p.container
+        if pu is None: raise Exception, "'select' component: cache requested not found! {}".format(dbname)
+        dependency_mu=pu
+        index_values=pu.pointed.data.index
+        deps.append(dependency_mu)
+        if not missing_tolerated:            
+          fields_from_index=[i for i in index_values]
+        else:
+          fields_from_index=[i for i in index_values if i in df.columns]
+        #replacing this item field
+        fields.pop(ifield)
+        for nfi, nf  in enumerate(fields_from_index):
+          fields.insert(ifield+nfi, nf)
+ 
+    if invert: fields=[f for f in df.columns if not f in fields]    
+    return (df[fields].copy(), deps)
+
+  def short(self): return DataChannelOperation.short(self) if self.parameters is None or not self.parameters.startswith('@')      else  '!'+self.parameters[1:]
+
+class DCO_rename(DataChannelOperationWithDependencies):
+  name='rename'
+  """Init with:  new1=old1
+     or with:    new1=old1,new2=old2
+     or:         ^cache_name@field       (index to field
+     or:         new1=old1,^cache_name@field
+"""
+  def action_with_dependencies(self, df):
+    rename_hash={}
+    deps=[]
+    for pair in self.interpreted_params(df).split(','):  
+      if not pair.startswith('^'):
+        newK, oldK= pair.split('=')
+        rename_hash[oldK]=newK
+      else:
+        var_name, field=pair[1:].split('@')
+        pu=None  #flag
+        p=self.container
+        while not p is None:
+          if p.has_cache(var_name): pu=p.retrieve_cache(var_name); break     
+          p=p.container
+        if pu is None: raise Exception, "'rename' component: cache requested not found! {}".format(dbname)
+        dependency_mu=pu
+        deps.append(dependency_mu)
+        for i, row_i in enumerate(pu.pointed.data.index):
+          oldK=row_i
+          newK=pu.pointed.data.at[row_i, field]
+          rename_hash[oldK]=newK
+    return df.rename(columns=rename_hash), deps
+
+
+
+class DCO_filter(DataChannelOperationWithDependencies):
+  name='filter'
+  """Init with: query string. Examples:     
+      DCO_filter( 'ML > 100' )    
+  special case  DCO_filter( '^ML@a' )  #check that value of ML is among the values of the index of cache a
+    """
+  def action_with_dependencies(self, df):    
+    x=self.interpreted_params(df)
+    if x and x.startswith('^'):
+      field, cache_name=x[1:].split('@')
+      pu=None  #flag
+      p=self.container
+      while not p is None:
+        if p.has_cache(var_name): pu=p.retrieve_cache(var_name); break     
+        p=p.container
+      if pu is None: raise Exception, "'filter' component: cache requested not found! {}".format(dbname)
+      dependency_mu=pu
+      index_values=pu.data.index
+      deps.append(dependency_mu)
+      if not field in df.columns: raise Exception, "'filter' component: field requested not found! {}".format(field)
+      selector=df[field].isin(  index_values )
+      return (df[selector], [dependency_mu])        #based on a test, no .copy() is needed
+
+    else:
+      return (df.query(x), [])
+
 
 class ExtensionDCO(DataChannelOperation):
   """ """
@@ -1600,9 +1683,13 @@ class DCO_cache(ManagementDCO):
     df,pu=write_cache_fn(df, mu, ip, container, dc) 
     return df,mu #,ds)  #NOTE: not returning pu
 
+BreakFlag=object()
 def write_cache_fn(df, mu, ip, container, dc):
     """ Utility to do the DCO_cache job  (I split the code to reuse it in DCO_add_to_plot)"""
     var_name=ip.split('@')[0]
+    if not container.has_cache(var_name) and dc.phase==1: 
+        write('init cache: {}  nope! break'.format(var_name), 1, how='green')
+        return BreakFlag, None
     #write('CACHE {v} in container {c}  --> df {d}'.format(v=var_name, c=container, d=df.head() if not df is None else df), 1, how='green')
     if mu.name=='root:':    mu=mu.children['null:'] #caching nothing.
     if mu.data is NoData:   mu.data=df ## making sure it's actually stored

@@ -12,7 +12,7 @@ class MasterContainer(dict, DC_container):
 
 master=MasterContainer()
 master.add_tree('default', Tree(tree_file)    )
-df=pd.DataFrame( data=pd.read_csv(csv_file, sep=',') )
+df=DataFrame( data=pd.read_csv(csv_file, sep=',') )
 master.add_database(df, name='someName', node_field='Species')
 master.show()
 
@@ -50,37 +50,34 @@ master.show()
   def trees(self):       return self['trees']
   def clipboard(self):   return QtGui.QApplication.clipboard()
   def qapp(self):        return self['qapp']
-  def show(self, qapp=None):       
-    dc=DataChannel(self)  #add tables and scatterplot if you want them opened
-    dc.muted=True
-    #dc.append(DCO_empty())
-    dc.append(DCO_database('LifeHistory'))
-    dc.append(DCO_select('Node,AdultWeight,MaxLifespan,MLres'))
-    dc.append(DCO_log('10|@n|log(@)|r')) 
-    dc.append(DCO_trace('WeightedAv'))
-    dc.append(DCO_treeInfo('time'))
-    dc.append(DCO_table('table1'))
-    dc.append(DCO_plot3D('3D.1'))
-    dc.append(DCO_newline())
+  def show(self, qapp=None, dc=None):       
+    if dc is None:
+      dc=DataChannel(self)  #add tables and scatterplot if you want them opened
+      dc.muted=True
+      dc.append(DCO_empty())
+      # dc.append(DCO_database('LifeHistory'))
+      # dc.append(DCO_select('Node,AdultWeight,MaxLifespan,MLres'))
+      # dc.append(DCO_log('10|@n|log(@)|r')) 
+      # dc.append(DCO_trace('WeightedAv'))
+      # dc.append(DCO_treeInfo('time'))
+      # dc.append(DCO_table('table1'))
+      # dc.append(DCO_plot3D('3D.1'))
+      # dc.append(DCO_newline())
 
-    dc.append(DCO_database('Ions'))
-    dc.append(DCO_filter('Tissue=="Liver"'))    
-    dc.append(DCO_select('Node,Se78'))
-    dc.append(DCO_rename('Selenium=Se78'))
-    dc.append(DCO_join('LifeHistory'))
-    dc.append(DCO_scatterplot('plot1'))
-    dc.append(DCO_newline())
-
-
-    dc.append(DCO_database('Metabolome'))
-    dc.append(DCO_scatterplot('plot2'))
-    dc.append(DCO_filter('Tissue=="Liver"'))    
-    dc.append(DCO_table('table2'))
-    dc.append(DCO_scatterplot('plot3'))
+      # dc.append(DCO_database('Ions'))
+      # dc.append(DCO_filter('Tissue=="Liver"'))    
+      # dc.append(DCO_select('Node,Se78'))
+      # dc.append(DCO_rename('Selenium=Se78'))
+      # dc.append(DCO_join('LifeHistory'))
+      # dc.append(DCO_scatterplot('plot1'))
+      # dc.append(DCO_newline())
 
 
-
-
+      # dc.append(DCO_database('Metabolome'))
+      # dc.append(DCO_scatterplot('plot2'))
+      # dc.append(DCO_filter('Tissue=="Liver"'))    
+      # dc.append(DCO_table('table2'))
+      # dc.append(DCO_scatterplot('plot3'))
 
 
     #dc.append(DCO_scatterplot('plot1'))

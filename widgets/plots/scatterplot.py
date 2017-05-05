@@ -822,7 +822,6 @@ class NodeScatterPlotItem(PlotItem):
     def update_marking(self): #, options_key): 
       mdf=self.marking_dc.out()
       write( 'update marking!', 1, how='green,reverse')
-      print mdf
       default_color=self.plot_item.plot_object.plot_window.master().colors().get_default_color()
       local_options=self.plot_item.options[self.options_key]
       mark_pen_color=self.plot_item.options['mark_color']
